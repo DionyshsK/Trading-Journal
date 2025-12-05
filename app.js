@@ -33,6 +33,8 @@ let chartInstance = null;
 let latestBalance = 0;
 let wizMarketType = '';
 let wizAccountType = 'Live';
+let dayChartInstance = null;
+let hourChartInstance = null;
 
 // Variables για το Calendar
 let calDate = new Date();
@@ -626,6 +628,8 @@ async function calcMetrics(trades) {
     const tradeOnly = trades.filter(t => t.type !== 'Withdrawal');
     document.getElementById('metric-trades').textContent = tradeOnly.length;
     document.getElementById('metric-winrate').textContent = tradeOnly.length ? ((wins/tradeOnly.length)*100).toFixed(0)+'%' : '0%';
+
+    updateAnalysisCharts(trades);
 }
 
 // ==========================================
@@ -755,37 +759,43 @@ function calculateMath() {
 }
 
 // Add Trade Logic
+// Add OR Edit Trade Logic
 document.getElementById('trade-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = document.querySelector('#trade-form button[type="submit"]');
-    btn.disabled = true; btn.textContent = "Saving..."; // UX βελτίωση
+    const btn = document.getElementById('add-trade-btn');
+    btn.disabled = true; 
+    btn.textContent = "Processing...";
 
+    const editId = document.getElementById('edit-trade-id').value; // Check αν κάνουμε edit
+
+    // ... (έλεγχος για cancelled account - ίδιος με πριν) ...
     if (currentAccountData.status && currentAccountData.status.includes('CANCELLED')) {
         alert("⛔ ACCOUNT CANCELLED. You cannot place new trades."); 
-        btn.disabled = false; btn.textContent = "Add Trade";
+        btn.disabled = false; btn.textContent = editId ? "Update Trade" : "Add Trade";
         return;
     }
 
     const file = document.getElementById('t-img').files[0];
     let imgUrl = null;
     
-    // ΝΕΑ ΛΟΓΙΚΗ: Upload στο Firebase Storage
+    // Αν υπάρχει νέο αρχείο, ανέβασέ το
     if (file) {
         try {
-            // Δημιουργία μοναδικού ονόματος αρχείου
             const storageRef = ref(storage, `users/${currentUserId}/${currentAccountId}/${Date.now()}_${file.name}`);
             await uploadBytes(storageRef, file);
-            imgUrl = await getDownloadURL(storageRef); // Παίρνουμε το Link, όχι το αρχείο
+            imgUrl = await getDownloadURL(storageRef);
         } catch(err) {
             alert("Image Upload Failed: " + err.message);
             btn.disabled = false; return;
         }
+    } else if (editId) {
+        // Αν κάνουμε Edit και δεν βάλαμε νέα εικόνα, κράτα την παλιά (θα τη βρούμε στο update)
+        // Για απλότητα, εδώ υποθέτουμε ότι αν δεν ανεβάσει νέα, απλά δεν αλλάζουμε το field της εικόνας
     }
     
-    const finalPnL = parseFloat(document.getElementById('t-net-pnl').value) || 0;
-
-    await addDoc(collection(db, `users/${currentUserId}/accounts/${currentAccountId}/trades`), {
+    const tradeData = {
         date: document.getElementById('t-date').value, 
+        time: document.getElementById('t-time').value, // ΝΕΟ
         symbol: document.getElementById('t-symbol').value.toUpperCase(), 
         type: document.getElementById('t-type').value, 
         size: parseFloat(document.getElementById('t-size').value) || 0,
@@ -794,20 +804,43 @@ document.getElementById('trade-form').addEventListener('submit', async (e) => {
         tp: parseFloat(document.getElementById('t-tp').value), 
         exit: parseFloat(document.getElementById('t-exit').value),
         fees: parseFloat(document.getElementById('t-fees').value) || 0,
-        pnl: finalPnL, 
+        pnl: parseFloat(document.getElementById('t-net-pnl').value) || 0, 
         notes: document.getElementById('t-notes').value, 
         confidence: document.getElementById('t-conf').value, 
-        image: imgUrl, // Αποθηκεύουμε URL πλέον
-        createdAt: Date.now()
-    });
+        mistake: document.getElementById('t-mistake').value, // ΝΕΟ
+    };
+
+    if (imgUrl) tradeData.image = imgUrl; // Πρόσθεσε εικόνα μόνο αν υπάρχει νέα
+
+    try {
+        if (editId) {
+            // --- UPDATE EXISTING TRADE ---
+            await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}/trades/${editId}`), tradeData);
+            alert("Trade Updated!");
+        } else {
+            // --- CREATE NEW TRADE ---
+            tradeData.createdAt = Date.now();
+            await addDoc(collection(db, `users/${currentUserId}/accounts/${currentAccountId}/trades`), tradeData);
+        }
+        
+        window.resetForm(); // Καθαρισμός φόρμας
+    } catch (error) {
+        console.error("Error saving trade:", error);
+        alert("Error saving trade!");
+    }
     
-    document.getElementById('trade-form').reset(); 
-    document.getElementById('conf-val').textContent = '5'; 
-    document.getElementById('file-name-display').textContent = 'Upload Screenshot';
-    document.getElementById('t-net-pnl').className = "w-full rounded-lg bg-gray-900 border border-gray-600 text-white p-2.5 font-mono cursor-not-allowed text-center font-bold text-lg";
-    
-    btn.disabled = false; btn.textContent = "Add Trade";
+    btn.disabled = false; 
 });
+
+// Helper για καθαρισμό φόρμας και επαναφορά από Edit Mode
+window.resetForm = () => {
+    document.getElementById('trade-form').reset();
+    document.getElementById('edit-trade-id').value = ""; // Clear ID
+    document.getElementById('add-trade-btn').textContent = "Add Trade";
+    document.getElementById('cancel-edit-btn').classList.add('hidden');
+    document.getElementById('t-net-pnl').className = "w-full rounded-lg bg-gray-900 border border-gray-600 text-white p-2.5 font-mono cursor-not-allowed text-center font-bold text-lg";
+    document.getElementById('file-name-display').textContent = 'Upload Screenshot';
+};
 
 // Render Trade List
 function renderTrades(trades) {
@@ -839,11 +872,11 @@ function renderTrades(trades) {
                 <td class="px-6 py-4 text-sm text-right font-mono text-indigo-500 font-bold">${rrStr}</td>
                 <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">${t.pnl.toFixed(2)}</td>
                 <td class="px-6 py-4 text-sm text-right">
-                    <select onchange="window.handleAction(this, '${t.id}')" class="bg-gray-700 border border-gray-600 text-white text-xs rounded-lg block w-full p-1.5 outline-none cursor-pointer">
-                        <option value="action" disabled selected>•••</option>
-                        <option value="view" class="bg-gray-700 text-white">📂 View</option>
-                        <option value="delete" class="bg-gray-700 text-white">✕ Delete</option>
-                    </select>
+                <select onchange="window.handleAction(this, '${t.id}')" class="bg-gray-700 border border-gray-600 text-white text-xs rounded-lg block w-full p-1.5 outline-none cursor-pointer">
+                    <option value="action" disabled selected>•••</option>
+                    <option value="view" class="bg-gray-700 text-white">📂 View</option>
+                    <option value="edit" class="bg-gray-700 text-white">✏️ Edit</option> <option value="delete" class="bg-gray-700 text-white">✕ Delete</option>
+                </select>
                 </td>`;
         }
         l.appendChild(tr);
@@ -852,6 +885,7 @@ function renderTrades(trades) {
 
 window.handleAction = (el, id) => { 
     if (el.value === 'view') window.viewTrade(id); 
+    if (el.value === 'edit') window.editTrade(id); // ΝΕΟ
     if (el.value === 'delete') window.deleteTrade(id); 
     el.value = 'action'; 
 };
@@ -989,8 +1023,9 @@ function renderCalendar() {
         const data = dailyStats[dStr] || { pnl: 0, events: [], count: 0 };
         
         const cell = document.createElement('div');
-        cell.className = `h-24 md:h-32 border dark:border-gray-700 rounded-lg p-2 flex flex-col justify-between transition hover:bg-gray-50 dark:hover:bg-gray-700/50 ${dStr === todayStr ? 'ring-2 ring-indigo-500' : ''} bg-white dark:bg-gray-800`;
-        
+        cell.className = `h-24 md:h-32 border dark:border-gray-700 rounded-lg p-2 flex flex-col justify-between transition hover:bg-gray-50 dark:hover:bg-gray-700/50 ${dStr === todayStr ? 'ring-2 ring-indigo-500' : ''} bg-white dark:bg-gray-800 cursor-pointer relative overflow-hidden group`;
+        cell.onclick = () => window.openDayDetails(dStr);
+
         let pnlColor = 'text-gray-400';
         if (data.pnl > 0) pnlColor = 'text-green-500';
         if (data.pnl < 0) pnlColor = 'text-red-500';
@@ -1100,11 +1135,9 @@ window.applyFilters = () => {
     });
 
     // Ξαναζωγράφισε τον πίνακα με τα φιλτραρισμένα
-    renderTrades([...filtered].reverse()); // Reverse για να δείχνει τα νέα πρώτα
-    
-    // Προαιρετικά: Θα μπορούσες να καλείς και την calcMetrics(filtered) 
-    // αν θέλεις τα στατιστικά (Winrate/PnL) να αλλάζουν βάσει φίλτρων!
-    // calcMetrics(filtered); <--- Ξε-σχολίασε αυτό αν θες δυναμικά στατιστικά
+    renderTrades([...filtered].reverse());
+
+    calcMetrics(filtered);
 };
 
 // Αυτή η συνάρτηση πρέπει να καλείται μέσα στην setupTradeListener
@@ -1211,4 +1244,164 @@ window.viewTrade = async (id) => {
         `;
         document.getElementById('details-modal').classList.remove('hidden');
     }
+};
+
+// ==========================================
+// 🛠️ EDIT TADE
+// ==========================================
+
+window.editTrade = async (id) => {
+    // 1. Βρες το trade
+    const trade = window.currentTrades.find(t => t.id === id);
+    if (!trade) return;
+
+    // 2. Άνοιξε τη φόρμα (αν είμαστε σε mobile)
+    const container = document.getElementById('trade-form-container');
+    if (container.classList.contains('hidden')) {
+        window.toggleMobileTradeForm();
+    }
+    
+    // 3. Συμπλήρωσε τα πεδία
+    document.getElementById('edit-trade-id').value = id; // ΣΗΜΑΝΤΙΚΟ: Θέτουμε το ID
+    document.getElementById('t-date').value = trade.date;
+    document.getElementById('t-time').value = trade.time || ""; // ΝΕΟ
+    document.getElementById('t-symbol').value = trade.symbol;
+    document.getElementById('t-size').value = trade.size;
+    document.getElementById('t-type').value = trade.type;
+    document.getElementById('t-entry').value = trade.entry;
+    document.getElementById('t-sl').value = trade.sl;
+    document.getElementById('t-tp').value = trade.tp;
+    document.getElementById('t-exit').value = trade.exit;
+    document.getElementById('t-fees').value = trade.fees;
+    document.getElementById('t-notes').value = trade.notes;
+    document.getElementById('t-conf').value = trade.confidence;
+    document.getElementById('t-mistake').value = trade.mistake || ""; // ΝΕΟ
+
+    // 4. Ενημέρωσε το UI
+    document.getElementById('add-trade-btn').textContent = "Update Trade";
+    document.getElementById('cancel-edit-btn').classList.remove('hidden');
+    document.getElementById('conf-val').textContent = trade.confidence;
+    
+    // 5. Τρέξε τον υπολογισμό PnL για να φαίνεται σωστά
+    // (Μικρό hack: προκαλούμε input event σε ένα πεδίο)
+    document.getElementById('t-entry').dispatchEvent(new Event('input'));
+    
+    // 6. Scroll up στη φόρμα
+    document.getElementById('trade-form').scrollIntoView({ behavior: 'smooth' });
+};
+
+// ==========================================
+// 🛠️ UPDATE ANALYSIS CHARTS
+// ==========================================
+
+function updateAnalysisCharts(trades) {
+    // A. Day of Week Analysis
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayPnL = [0,0,0,0,0,0,0];
+    
+    // B. Hour of Day Analysis
+    const hours = Array.from({length: 24}, (_, i) => i + ':00');
+    const hourPnL = new Array(24).fill(0);
+
+    trades.forEach(t => {
+        if (t.type === 'Withdrawal') return;
+        
+        // Day Calculation
+        const d = new Date(t.date).getDay(); // 0-6
+        dayPnL[d] += t.pnl;
+        
+        // Hour Calculation
+        if (t.time) {
+            const h = parseInt(t.time.split(':')[0]); // '14:30' -> 14
+            if (!isNaN(h)) hourPnL[h] += t.pnl;
+        }
+    });
+
+    // Render Day Chart
+    const ctxDay = document.getElementById('dayChart').getContext('2d');
+    if (dayChartInstance) dayChartInstance.destroy();
+    dayChartInstance = new Chart(ctxDay, {
+        type: 'bar',
+        data: {
+            labels: days,
+            datasets: [{
+                label: 'PnL ($)',
+                data: dayPnL,
+                backgroundColor: dayPnL.map(v => v >= 0 ? '#10b981' : '#ef4444'),
+                borderRadius: 4
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // Render Hour Chart
+    const ctxHour = document.getElementById('hourChart').getContext('2d');
+    if (hourChartInstance) hourChartInstance.destroy();
+    hourChartInstance = new Chart(ctxHour, {
+        type: 'bar',
+        data: {
+            labels: hours,
+            datasets: [{
+                label: 'PnL ($)',
+                data: hourPnL,
+                backgroundColor: hourPnL.map(v => v >= 0 ? '#6366f1' : '#ef4444'),
+                borderRadius: 2
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+}
+
+// Function για εμφάνιση trades συγκεκριμένης ημέρας
+window.openDayDetails = (dateStr) => {
+    // 1. Βρες τα trades εκείνης της ημέρας
+    const dayTrades = window.currentTrades.filter(t => t.date === dateStr);
+    
+    // 2. Ενημέρωσε τον τίτλο και το PnL της ημέρας
+    const dateObj = new Date(dateStr);
+    document.getElementById('day-modal-title').textContent = dateObj.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    
+    let totalPnL = 0;
+    dayTrades.forEach(t => totalPnL += t.pnl);
+    
+    const pnlClass = totalPnL >= 0 ? 'text-green-500' : 'text-red-500';
+    document.getElementById('day-modal-stats').innerHTML = `
+        Day Total: <span class="font-bold ${pnlClass}">$${totalPnL.toFixed(2)}</span> • ${dayTrades.length} Trades
+    `;
+
+    // 3. Δημιούργησε τη λίστα
+    const content = document.getElementById('day-modal-content');
+    content.innerHTML = '';
+
+    if (dayTrades.length === 0) {
+        content.innerHTML = '<p class="text-center text-gray-500 italic py-4">No trades logged for this day.</p>';
+    } else {
+        dayTrades.forEach(t => {
+            const div = document.createElement('div');
+            div.className = "flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer";
+            div.onclick = () => {
+                document.getElementById('day-details-modal').classList.add('hidden'); // Κλείσε το day modal
+                window.viewTrade(t.id); // Άνοιξε το αναλυτικό view trade modal
+            };
+
+            const isWin = t.pnl >= 0;
+            div.innerHTML = `
+                <div class="flex items-center gap-3">
+                    <div class="w-2 h-10 rounded-full ${isWin ? 'bg-green-500' : 'bg-red-500'}"></div>
+                    <div>
+                        <p class="font-bold text-gray-900 dark:text-white text-sm">${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span></p>
+                        <p class="text-xs text-gray-400">${t.time || 'No Time'}</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="font-bold font-mono ${isWin ? 'text-green-500' : 'text-red-500'}">${isWin ? '+' : ''}${t.pnl.toFixed(2)}</p>
+                    <p class="text-xs text-gray-500">${t.size} Lots</p>
+                </div>
+            `;
+            content.appendChild(div);
+        });
+    }
+
+    // 4. Εμφάνισε το modal
+    document.getElementById('day-details-modal').classList.remove('hidden');
 };
