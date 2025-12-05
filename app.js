@@ -1,15 +1,13 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, setDoc, doc, getDoc, updateDoc, deleteDoc, getDocs, limit } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-// ΝΕΟ: Προσθήκη Storage Imports
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
 // === FIREBASE CONFIG ===
 const firebaseConfig = {
     apiKey: "AIzaSyDLqWiGvAMwzjhAZCfrqMVQz2_4F4s7nAc",
     authDomain: "trading-journal-db-eb6e1.firebaseapp.com",
     projectId: "trading-journal-db-eb6e1",
-    storageBucket: "trading-journal-db-eb6e1.firebasestorage.app", // Βεβαιώσου ότι είναι ενεργό στο Firebase Console
+    storageBucket: "trading-journal-db-eb6e1.firebasestorage.app",
     messagingSenderId: "672967817566",
     appId: "1:672967817566:web:10c873bf5726f3424cf7cf"
 };
@@ -17,7 +15,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app); // ΝΕΟ: Init Storage
 
 // ==========================================
 // 🌍 GLOBAL VARIABLES & STATE
@@ -39,6 +36,30 @@ let hourChartInstance = null;
 // Variables για το Calendar
 let calDate = new Date();
 window.currentTrades = []; // Αποθηκεύουμε τα trades εδώ για να τα βλέπει το calendar
+
+// ΝΕΟ: Συνάρτηση μετατροπής εικόνας σε Base64 String
+const convertToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = (error) => reject(error);
+    });
+};
+
+// ΝΕΟ: Μεταφραστής Σφαλμάτων Firebase
+const getFriendlyErrorMessage = (errorCode) => {
+    switch(errorCode) {
+        case 'auth/invalid-credential': return "Invalid email or password.";
+        case 'auth/user-not-found': return "No user found with this email.";
+        case 'auth/wrong-password': return "Incorrect password.";
+        case 'auth/email-already-in-use': return "Email is already in use.";
+        case 'auth/weak-password': return "Password must be at least 6 characters.";
+        case 'auth/invalid-email': return "Invalid email format.";
+        case 'auth/too-many-requests': return "Too many failed attempts. Please try again later.";
+        default: return "An error occurred. Please try again.";
+    }
+};
 
 // ==========================================
 // 🛠️ HELPER FUNCTIONS (WINDOW BINDINGS)
@@ -112,7 +133,7 @@ loginForm.addEventListener('submit', async (e) => {
     try {
         await signInWithEmailAndPassword(auth, email, pass);
     } catch (err) {
-        loginError.textContent = "Login Failed: " + err.message;
+        loginError.textContent = getFriendlyErrorMessage(err.code);
         loginError.classList.remove('hidden');
     }
 });
@@ -153,7 +174,7 @@ registerForm.addEventListener('submit', async (e) => {
             createdAt: Date.now()
         });
     } catch (err) {
-        regError.textContent = err.message;
+        regError.textContent = getFriendlyErrorMessage(err.code);
         regError.classList.remove('hidden');
     }
 });
@@ -169,7 +190,7 @@ forgotForm.addEventListener('submit', async (e) => {
         forgotMsg.className = "text-center text-sm font-bold text-green-500 p-2";
         forgotMsg.classList.remove('hidden');
     } catch (err) {
-        forgotMsg.textContent = err.message;
+        forgotMsg.textContent = getFriendlyErrorMessage(err.code);
         forgotMsg.className = "text-center text-sm font-bold text-red-500 p-2";
         forgotMsg.classList.remove('hidden');
     }
@@ -452,29 +473,17 @@ window.selectAccount = async (id) => {
 window.deleteAccount = async (id) => {
     if (!confirm("DELETE ACCOUNT & ALL TRADES? Irreversible.")) return;
     
-    // 1. Βρες όλα τα trades του λογαριασμού
     const tradesRef = collection(db, `users/${currentUserId}/accounts/${id}/trades`);
     const snap = await getDocs(tradesRef);
     
-    // 2. Διέγραψε κάθε trade ΚΑΙ την εικόνα του (αν υπάρχει)
-    const deletions = snap.docs.map(async (docSnap) => {
-        const t = docSnap.data();
-        if(t.image && t.image.includes('firebasestorage')) {
-            try { 
-                // Εξαγωγή του path από το URL για διαγραφή
-                const storageRef = ref(storage, t.image);
-                await deleteObject(storageRef); 
-            } catch(e) { console.log('Image cleanup err', e); }
-        }
-        return deleteDoc(docSnap.ref);
-    });
+    // Απλά σβήνουμε τα documents (η εικόνα είναι μέσα στο κείμενο του document πλέον)
+    const deletions = snap.docs.map(docSnap => deleteDoc(docSnap.ref)); 
     
-    await Promise.all(deletions); // Περίμενε να σβηστούν όλα
+    await Promise.all(deletions);
     
-    // 3. Διέγραψε τον ίδιο τον λογαριασμό
     await deleteDoc(doc(db, `users/${currentUserId}/accounts/${id}`));
     
-    if(currentAccountId === id) {
+    if (currentAccountId === id) {
         currentAccountId = null;
         document.getElementById('dashboard-content').classList.add('hidden');
     }
@@ -760,76 +769,75 @@ function calculateMath() {
 
 // Add Trade Logic
 // Add OR Edit Trade Logic
+// === ADD / EDIT TRADE LOGIC (BASE64 VERSION) ===
 document.getElementById('trade-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const btn = document.getElementById('add-trade-btn');
+    const btn = document.getElementById('add-trade-btn'); 
     btn.disabled = true; 
     btn.textContent = "Processing...";
 
-    const editId = document.getElementById('edit-trade-id').value; // Check αν κάνουμε edit
+    const editId = document.getElementById('edit-trade-id').value;
 
-    // ... (έλεγχος για cancelled account - ίδιος με πριν) ...
     if (currentAccountData.status && currentAccountData.status.includes('CANCELLED')) {
         alert("⛔ ACCOUNT CANCELLED. You cannot place new trades."); 
-        btn.disabled = false; btn.textContent = editId ? "Update Trade" : "Add Trade";
+        btn.disabled = false; btn.textContent = editId ? "Update Trade" : "Add Trade"; 
         return;
     }
 
+    // --- LOGIC ΓΙΑ ΜΕΤΑΤΡΟΠΗ ΕΙΚΟΝΑΣ ΣΕ ΚΕΙΜΕΝΟ ---
     const file = document.getElementById('t-img').files[0];
-    let imgUrl = null;
-    
-    // Αν υπάρχει νέο αρχείο, ανέβασέ το
+    let imgBase64 = null;
+
     if (file) {
-        try {
-            const storageRef = ref(storage, `users/${currentUserId}/${currentAccountId}/${Date.now()}_${file.name}`);
-            await uploadBytes(storageRef, file);
-            imgUrl = await getDownloadURL(storageRef);
-        } catch(err) {
-            alert("Image Upload Failed: " + err.message);
-            btn.disabled = false; return;
+        // Έλεγχος μεγέθους: Το Firestore έχει όριο 1MB ανά έγγραφο. 
+        // Βάζουμε όριο 800KB για να είμαστε ασφαλείς.
+        if (file.size > 800 * 1024) { 
+            alert("Image too large! Please upload images smaller than 800KB.");
+            btn.disabled = false; btn.textContent = editId ? "Update Trade" : "Add Trade"; 
+            return;
         }
-    } else if (editId) {
-        // Αν κάνουμε Edit και δεν βάλαμε νέα εικόνα, κράτα την παλιά (θα τη βρούμε στο update)
-        // Για απλότητα, εδώ υποθέτουμε ότι αν δεν ανεβάσει νέα, απλά δεν αλλάζουμε το field της εικόνας
+        try {
+            imgBase64 = await convertToBase64(file);
+        } catch(err) { 
+            alert("Image Error: " + err.message); 
+            btn.disabled = false; 
+            return; 
+        }
     }
-    
+
     const tradeData = {
         date: document.getElementById('t-date').value, 
-        time: document.getElementById('t-time').value, // ΝΕΟ
+        time: document.getElementById('t-time').value,
         symbol: document.getElementById('t-symbol').value.toUpperCase(), 
-        type: document.getElementById('t-type').value, 
-        size: parseFloat(document.getElementById('t-size').value) || 0,
-        entry: parseFloat(document.getElementById('t-entry').value), 
+        type: document.getElementById('t-type').value,
+        size: parseFloat(document.getElementById('t-size').value) || 0, 
+        entry: parseFloat(document.getElementById('t-entry').value),
         sl: parseFloat(document.getElementById('t-sl').value), 
-        tp: parseFloat(document.getElementById('t-tp').value), 
-        exit: parseFloat(document.getElementById('t-exit').value),
+        tp: parseFloat(document.getElementById('t-tp').value),
+        exit: parseFloat(document.getElementById('t-exit').value), 
         fees: parseFloat(document.getElementById('t-fees').value) || 0,
         pnl: parseFloat(document.getElementById('t-net-pnl').value) || 0, 
-        notes: document.getElementById('t-notes').value, 
+        notes: document.getElementById('t-notes').value,
         confidence: document.getElementById('t-conf').value, 
-        mistake: document.getElementById('t-mistake').value, // ΝΕΟ
+        mistake: document.getElementById('t-mistake').value,
     };
 
-    if (imgUrl) tradeData.image = imgUrl; // Πρόσθεσε εικόνα μόνο αν υπάρχει νέα
+    if (imgBase64) tradeData.image = imgBase64; // Αποθηκεύουμε το String
 
     try {
         if (editId) {
-            // --- UPDATE EXISTING TRADE ---
             await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}/trades/${editId}`), tradeData);
             alert("Trade Updated!");
         } else {
-            // --- CREATE NEW TRADE ---
             tradeData.createdAt = Date.now();
             await addDoc(collection(db, `users/${currentUserId}/accounts/${currentAccountId}/trades`), tradeData);
         }
-        
-        window.resetForm(); // Καθαρισμός φόρμας
-    } catch (error) {
-        console.error("Error saving trade:", error);
-        alert("Error saving trade!");
+        window.resetForm();
+    } catch (error) { 
+        console.error("Error saving trade:", error); 
+        alert("Error saving trade: " + error.message); 
     }
-    
-    btn.disabled = false; 
+    btn.disabled = false;
 });
 
 // Helper για καθαρισμό φόρμας και επαναφορά από Edit Mode
@@ -892,20 +900,9 @@ window.handleAction = (el, id) => {
 
 window.deleteTrade = async (id) => {
     if(!confirm("Are you sure?")) return;
-    
-    // 1. Πρώτα παίρνουμε τα δεδομένα για να βρούμε την εικόνα
+    // Απλή διαγραφή του εγγράφου (σβήνει και την εικόνα αυτόματα)
     const docRef = doc(db, `users/${currentUserId}/accounts/${currentAccountId}/trades/${id}`);
-    const snap = await getDoc(docRef);
-    
-    if (snap.exists()) {
-        const data = snap.data();
-        // 2. Αν υπάρχει εικόνα στο Storage, σβήσε την
-        if (data.image && data.image.includes('firebasestorage')) {
-             try { await deleteObject(ref(storage, data.image)); } catch(e) { console.log(e); }
-        }
-        // 3. Σβήσε το έγγραφο
-        await deleteDoc(docRef);
-    }
+    await deleteDoc(docRef); 
 };
 
 window.viewTrade = async (id) => {
