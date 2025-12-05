@@ -1047,7 +1047,6 @@ document.addEventListener('click', () => {
     dc.classList.add('hidden-menu');
 });
 
-document.getElementById('theme-toggle').addEventListener('click', () => document.documentElement.classList.toggle('dark'));
 
 document.getElementById('t-img').addEventListener('change', function() {
     document.getElementById('file-name-display').textContent = this.files[0] ? this.files[0].name : "Upload Screenshot";
@@ -1075,20 +1074,8 @@ document.getElementById('profile-form').addEventListener('submit', async (e) => 
 document.getElementById('chart-zoom-level').addEventListener('change', () => {
     if (currentAccountId) setupTradeListener(currentAccountId);
 });
-// Αντικατάστησε το υπάρχον theme toggle listener με αυτό:
-const themeToggleBtn = document.getElementById('theme-toggle');
-if (localStorage.getItem('theme') === 'light') {
-    document.documentElement.classList.remove('dark');
-}
 
-themeToggleBtn.addEventListener('click', () => {
-    document.documentElement.classList.toggle('dark');
-    if (document.documentElement.classList.contains('dark')) {
-        localStorage.setItem('theme', 'dark');
-    } else {
-        localStorage.setItem('theme', 'light');
-    }
-});
+
 // ==========================================
 // 🔍 FILTERING LOGIC (NEW FEATURE)
 // ==========================================
@@ -1136,27 +1123,92 @@ function updateSymbolFilterOptions(trades) {
     });
     select.value = currentVal; // Διατήρηση επιλογής αν γίνει refresh
 }
+
 // ==========================================
-// 📱 MOBILE UX LOGIC
+// 🛠️ UI & THEME FUNCTIONS (FIXED)
 // ==========================================
 
-// ΝΕΑ ΥΛΟΠΟΙΗΣΗ: Χρησιμοποιούμε Event Listener αντί για window function
-// Αυτό εξασφαλίζει ότι το click δουλεύει σωστά σε όλα τα mobile devices
-const toggleBtn = document.getElementById('trade-toggle-btn');
+// 1. Λειτουργία Mobile Toggle (Σταθερή)
+window.toggleMobileTradeForm = () => {
+    const container = document.getElementById('trade-form-container');
+    const icon = document.getElementById('form-toggle-icon');
+    
+    container.classList.toggle('hidden');
+    
+    if (container.classList.contains('hidden')) {
+        icon.classList.remove('rotate-180');
+    } else {
+        icon.classList.add('rotate-180');
+    }
+};
 
-if (toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-        // Αυτό τρέχει μόνο αν είμαστε σε mobile (λόγω CSS pointer-events/display)
-        const container = document.getElementById('trade-form-container');
-        const icon = document.getElementById('form-toggle-icon');
-        
-        // Εμφάνιση / Απόκρυψη
-        container.classList.toggle('hidden');
-        
-        // Περιστροφή του βέλους
-        if (container.classList.contains('hidden')) {
-            icon.classList.remove('rotate-180');
-        } else {
-            icon.classList.add('rotate-180');
+// 2. Λειτουργία Theme Toggle (Σταθερή)
+window.toggleTheme = (e) => {
+    // Σταματάμε το κλικ από το να κλείσει το μενού αμέσως (προαιρετικό)
+    if(e) e.stopPropagation(); 
+    
+    document.documentElement.classList.toggle('dark');
+    
+    if (document.documentElement.classList.contains('dark')) {
+        localStorage.setItem('theme', 'dark');
+    } else {
+        localStorage.setItem('theme', 'light');
+    }
+};
+
+// Αρχικός έλεγχος Theme κατά τη φόρτωση
+if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+} else {
+    document.documentElement.classList.remove('dark');
+}
+
+// 3. ΕΝΗΜΕΡΩΜΕΝΗ View Trade (Με Lots & Fees)
+window.viewTrade = async (id) => {
+    const docRef = doc(db, `users/${currentUserId}/accounts/${currentAccountId}/trades/${id}`);
+    const snap = await getDoc(docRef);
+    
+    if (snap.exists()) {
+        const trade = snap.data();
+        let rrString = "-";
+        if (trade.sl && trade.entry && trade.tp) {
+            const risk = Math.abs(trade.entry - trade.sl);
+            const reward = Math.abs(trade.tp - trade.entry);
+            if(risk > 0) rrString = (reward / risk).toFixed(1) + ":1";
         }
-    });
+
+        const el = document.getElementById('modal-content');
+        el.innerHTML = `
+            <div class="grid grid-cols-2 gap-4 text-sm mb-4">
+                <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl space-y-1">
+                    <span class="text-xs text-gray-500 uppercase font-bold">Symbol</span>
+                    <p class="text-xl font-bold text-gray-900 dark:text-white">${trade.symbol} <span class="${trade.type === 'Long' ? 'text-green-500' : 'text-red-500'} text-base">(${trade.type})</span></p>
+                </div>
+                <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl space-y-1">
+                    <span class="text-xs text-gray-500 uppercase font-bold">Net PnL</span>
+                    <p class="text-xl font-bold ${trade.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">${parseFloat(trade.pnl).toFixed(2)}</p>
+                </div>
+            </div>
+            
+            <div class="bg-indigo-50 dark:bg-indigo-900/30 p-4 rounded-xl border border-indigo-100 dark:border-indigo-800 mb-4">
+                <div class="grid grid-cols-3 gap-4 text-center mb-3">
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Entry</span><span class="font-mono font-bold dark:text-white">${trade.entry}</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Size</span><span class="font-mono font-bold dark:text-white">${trade.size || 0} Lots</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Fees</span><span class="font-mono font-bold text-red-400">$${trade.fees || 0}</span></div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 text-center border-t border-indigo-200 dark:border-indigo-700 pt-3">
+                    <div><span class="block text-xs text-red-500 uppercase font-bold">Stop Loss</span><span class="font-mono font-bold dark:text-gray-300">${trade.sl}</span></div>
+                    <div><span class="block text-xs text-green-500 uppercase font-bold">Take Profit</span><span class="font-mono font-bold dark:text-gray-300">${trade.tp || '-'}</span></div>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <span class="block text-xs text-gray-500 uppercase font-bold mb-2">Notes</span>
+                <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl text-gray-700 dark:text-gray-300 italic border border-gray-100 dark:border-gray-600">"${trade.notes || 'No notes added.'}"</div>
+            </div>
+
+            ${trade.image ? `<div><span class="block text-xs text-gray-500 uppercase font-bold mb-2 mt-4">Screenshot</span><img src="${trade.image}" class="w-full rounded-xl border dark:border-gray-600 shadow-sm"></div>` : ''}
+        `;
+        document.getElementById('details-modal').classList.remove('hidden');
+    }
+};
