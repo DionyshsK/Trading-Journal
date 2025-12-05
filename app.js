@@ -1136,3 +1136,27 @@ function updateSymbolFilterOptions(trades) {
     });
     select.value = currentVal; // Διατήρηση επιλογής αν γίνει refresh
 }
+// ==========================================
+// 📱 MOBILE UX LOGIC
+// ==========================================
+
+// ΝΕΑ ΥΛΟΠΟΙΗΣΗ: Χρησιμοποιούμε Event Listener αντί για window function
+// Αυτό εξασφαλίζει ότι το click δουλεύει σωστά σε όλα τα mobile devices
+const toggleBtn = document.getElementById('trade-toggle-btn');
+
+if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+        // Αυτό τρέχει μόνο αν είμαστε σε mobile (λόγω CSS pointer-events/display)
+        const container = document.getElementById('trade-form-container');
+        const icon = document.getElementById('form-toggle-icon');
+        
+        // Εμφάνιση / Απόκρυψη
+        container.classList.toggle('hidden');
+        
+        // Περιστροφή του βέλους
+        if (container.classList.contains('hidden')) {
+            icon.classList.remove('rotate-180');
+        } else {
+            icon.classList.add('rotate-180');
+        }
+    });
