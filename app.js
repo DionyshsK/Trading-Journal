@@ -464,10 +464,21 @@ function setupTradeListener(accId) {
     const q = query(collection(db, `users/${currentUserId}/accounts/${accId}/trades`), orderBy('date', 'asc'));
     
     tradeUnsubscribe = onSnapshot(q, (s) => {
-        const trades = s.docs.map(d => ({ id: d.id, ...d.data() }));
+        let trades = s.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        trades.sort((a, b) => {
+            const timeA = a.time ? a.time : '00:00';
+            const timeB = b.time ? b.time : '00:00';
+            const dateA = new Date(`${a.date}T${timeA}`);
+            const dateB = new Date(`${b.date}T${timeB}`);
+            return dateA - dateB;
+        });
+
         window.currentTrades = trades;
         updateSymbolFilterOptions(trades);
         
+        // Στον πίνακα τα δείχνουμε ανάποδα (το πιο πρόσφατο πάνω), 
+        // αλλά στο γράφημα (calcMetrics) πάνε με τη σωστή χρονική σειρά.
         renderTrades([...trades].reverse());
         calcMetrics(trades);
         
@@ -492,15 +503,19 @@ async function calcMetrics(trades) {
     const data = [initBal];
 
     trades.forEach(t => {
+        // 1. Υπολογισμός Κέρδους/Ζημιάς
         netPnL += t.pnl;
         
+        // 2. Στατιστικά (εξαιρούμε τις αναλήψεις)
         if (t.type !== 'Withdrawal') {
             if (t.pnl > 0) wins++;
             if (t.date === today) todayPnL += t.pnl;
             tradeCount++;
         }
-        
-        labels.push(t.date);
+        const timePart = t.time ? t.time : '00:00';
+        labels.push(`${t.date}T${timePart}`); 
+
+        // 3. Ενημέρωση δεδομένων γραφήματος
         const phaseAdjustedBalance = initBal + (netPnL - offset);
         data.push(phaseAdjustedBalance);
     });
@@ -603,43 +618,112 @@ async function calcMetrics(trades) {
 function updateChart(ctx, labels, data, isDark) {
     const chartCanvas = document.getElementById('growthChart');
     if (!chartCanvas) return;
-    const context = chartCanvas.getContext('2d');
-    const zoom = parseFloat(document.getElementById('chart-zoom-level').value) || 0.1;
-    const currentBal = data[data.length - 1];
     
+    const timeData = labels.map((dateStr, index) => ({
+        x: new Date(dateStr), // Μετατροπή σε Date object που περιέχει ΚΑΙ την ώρα
+        y: data[index]
+    }));
+
+    // Προσθήκη του "Τώρα"
+    if (timeData.length > 0) {
+        const lastBalance = timeData[timeData.length - 1].y;
+        timeData.push({
+            x: new Date(), 
+            y: lastBalance 
+        });
+    }
+
+    const context = chartCanvas.getContext('2d');
+    const zoomLvl = parseFloat(document.getElementById('chart-zoom-level').value) || 0.1;
+    
+    const allValues = timeData.map(p => p.y);
+    const minVal = Math.min(...allValues);
+    const maxVal = Math.max(...allValues);
+    const padding = (maxVal - minVal) * zoomLvl || (maxVal * 0.05);
+
     if (chartInstance) {
         chartInstance.destroy();
         chartInstance = null;
     }
-    
-    chartInstance = new Chart(context, { 
-        type: 'line', 
-        data: { 
-            labels, 
+
+    chartInstance = new Chart(context, {
+        type: 'line',
+        data: {
             datasets: [{
-                label: 'Balance', 
-                data: data, 
-                borderColor: '#4f46e5', 
-                backgroundColor: 'rgba(79,70,229,0.1)', 
-                stepped: 'middle', 
-                fill: true, 
-                pointRadius: 0
-            }] 
-        }, 
+                label: 'Balance',
+                data: timeData, 
+                borderColor: '#4f46e5',
+                backgroundColor: 'rgba(79,70,229,0.1)',
+                borderWidth: 2,
+                fill: true,
+                stepped: true, // Σκαλοπάτια
+                pointRadius: (ctx) => {
+                    const index = ctx.dataIndex;
+                    const total = ctx.dataset.data.length;
+                    return index === total - 1 ? 0 : 3; 
+                },
+                pointHoverRadius: 6,
+                tension: 0 
+            }]
+        },
         options: {
-            responsive: true, 
-            maintainAspectRatio: false, 
-            plugins: { legend: { display: false } }, 
-            scales: { 
-                x: { display: false }, 
-                y: { 
-                    suggestedMin: currentBal * (1 - zoom), 
-                    suggestedMax: currentBal * (1 + zoom), 
-                    grid: { color: isDark ? '#374151' : '#e5e7eb' }, 
-                    ticks: { color: isDark ? '#9ca3af' : '#4b5563' } 
-                } 
-            } 
-        } 
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: (context) => {
+                            const date = new Date(context[0].parsed.x);
+                            // ΑΛΛΑΓΗ: Εμφανίζουμε και την ώρα στο Tooltip
+                            return date.toLocaleDateString('en-US', { 
+                                month: 'short', day: 'numeric', year: 'numeric', 
+                                hour: '2-digit', minute:'2-digit' 
+                            });
+                        },
+                        label: (context) => {
+                            if (context.dataIndex === context.dataset.data.length - 1) {
+                                return `Current: $${context.parsed.y.toFixed(2)}`;
+                            }
+                            return `Balance: $${context.parsed.y.toFixed(2)}`;
+                        }
+                    }
+                },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        // ΑΛΛΑΓΗ: Αφαιρέσαμε το unit: 'day' για να διαλέγει μόνο του (μέρα ή ώρα)
+                        // ή μπορούμε να βάλουμε minUnit: 'minute' αν θέλουμε πολλή λεπτομέρεια
+                        tooltipFormat: 'MMM dd, HH:mm',
+                        displayFormats: {
+                            hour: 'MMM dd HH:mm', // Πώς φαίνεται όταν κάνεις zoom
+                            day: 'MMM dd'
+                        }
+                    },
+                    grid: {
+                        color: isDark ? '#374151' : '#e5e7eb',
+                        display: false 
+                    },
+                    ticks: {
+                        color: isDark ? '#9ca3af' : '#4b5563',
+                        maxRotation: 0,
+                        autoSkip: true
+                    }
+                },
+                y: {
+                    suggestedMin: minVal - padding,
+                    suggestedMax: maxVal + padding,
+                    grid: { color: isDark ? '#374151' : '#e5e7eb' },
+                    ticks: { color: isDark ? '#9ca3af' : '#4b5563' }
+                }
+            }
+        }
     });
 }
 
