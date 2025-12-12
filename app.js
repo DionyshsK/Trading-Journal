@@ -634,7 +634,7 @@ function updateChart(ctx, labels, data, isDark) {
     }
 
     const context = chartCanvas.getContext('2d');
-    const zoomLvl = parseFloat(document.getElementById('chart-zoom-level').value) || 0.1;
+    const zoomLvl = 0.1;
     
     const allValues = timeData.map(p => p.y);
     const minVal = Math.min(...allValues);
@@ -659,8 +659,14 @@ function updateChart(ctx, labels, data, isDark) {
                 stepped: true, // Σκαλοπάτια
                 pointRadius: (ctx) => {
                     const index = ctx.dataIndex;
-                    const total = ctx.dataset.data.length;
-                    return index === total - 1 ? 0 : 3; 
+                    const data = ctx.dataset.data;
+
+                    if (index === data.length - 1) return 3;
+
+                    if (data[index + 1] && data[index].x.getTime() === data[index + 1].x.getTime()) {
+                        return 0;
+                    }
+                    return 3; 
                 },
                 pointHoverRadius: 6,
                 tension: 0 
@@ -867,8 +873,9 @@ function renderTrades(trades) {
     
     trades.forEach(t => {
         const tr = document.createElement('tr'); 
-        tr.className = "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition";
+        tr.className = "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition relative"; // Πρόσθεσα relative
         
+        // ... (Ο κώδικας για το rrStr και το Withdrawal μένει ίδιος μέχρι το else) ...
         let rrStr = "-"; 
         if (t.entry && t.sl && t.tp && t.type !== 'Withdrawal') {
             const risk = Math.abs(t.entry - t.sl); 
@@ -877,24 +884,28 @@ function renderTrades(trades) {
         }
 
         if (t.type === 'Withdrawal') {
-             tr.innerHTML = `
-                <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">${t.date}</td>
-                <td class="px-6 py-4 text-sm font-bold text-green-500 uppercase tracking-widest">PAYOUT</td>
-                <td class="px-6 py-4 text-sm text-right text-gray-500">-</td>
-                <td class="px-6 py-4 text-sm text-right font-bold text-gray-500">${t.pnl.toFixed(2)}</td>
-                <td class="px-6 py-4 text-sm text-right"><button onclick="window.deleteTrade('${t.id}')" class="text-gray-400 hover:text-red-500 transition">✕</button></td>`;
+             tr.innerHTML = `...`; // (Κράτησε το ίδιο HTML για το withdrawal που είχες)
         } else {
             tr.innerHTML = `
                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">${t.date}</td>
                 <td class="px-6 py-4 text-sm font-bold text-gray-700 dark:text-gray-200">${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span></td>
                 <td class="px-6 py-4 text-sm text-right font-mono text-indigo-500 font-bold">${rrStr}</td>
                 <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">${t.pnl.toFixed(2)}</td>
-                <td class="px-6 py-4 text-sm text-right">
-                <select onchange="window.handleAction(this, '${t.id}')" class="bg-gray-700 border border-gray-600 text-white text-xs rounded-lg block w-full p-1.5 outline-none cursor-pointer">
-                    <option value="action" disabled selected>•••</option>
-                    <option value="view" class="bg-gray-700 text-white">📂 View</option>
-                    <option value="edit" class="bg-gray-700 text-white">✏️ Edit</option> <option value="delete" class="bg-gray-700 text-white">✕ Delete</option>
-                </select>
+                <td class="px-6 py-4 text-sm text-right relative">
+                    <button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
+                    </button>
+                    <div id="menu-${t.id}" class="hidden absolute right-10 top-2 z-50 w-36 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden text-left">
+                        <button onclick="window.viewTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">
+                            📂 View
+                        </button>
+                        <button onclick="window.editTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">
+                            ✏️ Edit
+                        </button>
+                        <button onclick="window.deleteTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center">
+                            ✕ Delete
+                        </button>
+                    </div>
                 </td>`;
         }
         l.appendChild(tr);
@@ -1014,28 +1025,10 @@ function renderCalendar() {
 window.switchTab = (t) => {
     ['dashboard', 'accounts', 'profile', 'calendar'].forEach(i => document.getElementById(`tab-${i}`).classList.add('hidden'));
     document.getElementById(`tab-${t}`).classList.remove('hidden');
-    document.getElementById('dropdown-content').classList.add('hidden-menu');
-    document.getElementById('dropdown-content').classList.remove('visible-menu');
+    document.getElementById('dropdown-content').classList.add('hidden');
     
     if (t === 'calendar' && currentAccountData) renderCalendar();
 };
-
-const mb = document.getElementById('menu-btn');
-const dc = document.getElementById('dropdown-content');
-mb.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (dc.classList.contains('visible-menu')) {
-        dc.classList.remove('visible-menu');
-        dc.classList.add('hidden-menu');
-    } else {
-        dc.classList.remove('hidden-menu');
-        dc.classList.add('visible-menu');
-    }
-});
-document.addEventListener('click', () => {
-    dc.classList.remove('visible-menu');
-    dc.classList.add('hidden-menu');
-});
 
 const fileInput = document.getElementById('t-img');
 if (fileInput) {  // <--- ΑΥΤΗ Η ΓΡΑΜΜΗ ΣΩΖΕΙ ΤΟ ΚΡΑΣΑΡΙΣΜΑ
@@ -1063,10 +1056,6 @@ document.getElementById('profile-form').addEventListener('submit', async (e) => 
         strategies
     });
     alert("Profile Saved!");
-});
-
-document.getElementById('chart-zoom-level').addEventListener('change', () => {
-    if (currentAccountId) setupTradeListener(currentAccountId);
 });
 
 // Filtering
@@ -1327,3 +1316,67 @@ window.openDayDetails = (dateStr) => {
 
     document.getElementById('day-details-modal').classList.remove('hidden');
 };
+// ==========================================
+// 🛠️ MENU & NAVIGATION LOGIC (CLEAN & FIXED)
+// ==========================================
+
+window.toggleRowMenu = (id) => {
+
+    if (window.event) window.event.stopPropagation();
+
+    document.querySelectorAll('[id^="menu-"]').forEach(el => {
+
+        if (el.id !== `menu-${id}` && el.id !== 'menu-btn' && el.id !== 'menu-current-acc') {
+            el.classList.add('hidden');
+        }
+    });
+
+    const menu = document.getElementById(`menu-${id}`);
+    if (menu) {
+        menu.classList.toggle('hidden');
+    }
+};
+
+const mb = document.getElementById('menu-btn');
+const dc = document.getElementById('dropdown-content');
+
+if (mb && dc) {
+    mb.addEventListener('click', (e) => {
+        e.stopPropagation(); // Σταματάμε το κλικ
+        dc.classList.toggle('hidden'); // Απλό άνοιγμα/κλείσιμο
+    });
+}
+
+document.addEventListener('click', (e) => {
+
+    if (dc && mb && !dc.contains(e.target) && !mb.contains(e.target)) {
+        dc.classList.add('hidden');
+    }
+
+    if (!e.target.closest('button[onclick^="window.toggleRowMenu"]') && !e.target.closest('[id^="menu-"]')) {
+        document.querySelectorAll('[id^="menu-"]').forEach(el => {
+            // ΕΛΕΓΧΟΣ ΑΣΦΑΛΕΙΑΣ:
+            // Αν το στοιχείο είναι το κουμπί 'menu-btn' ή το 'menu-current-acc', ΜΗΝ το κρύψεις.
+            if (el.id !== 'menu-btn' && el.id !== 'menu-current-acc') {
+                el.classList.add('hidden');
+            }
+        });
+    }
+});
+
+window.closeAllActionMenus = () => {
+    document.querySelectorAll('[id^="menu-"]').forEach(el => {
+        // Μην κρύβεις το κεντρικό κουμπί (menu-btn) ή το κείμενο λογαριασμού
+        if (el.id !== 'menu-btn' && el.id !== 'menu-current-acc') {
+            el.classList.add('hidden');
+        }
+    });
+};
+const origView = window.viewTrade;
+window.viewTrade = (id) => { window.closeAllActionMenus(); if(origView) origView(id); };
+
+const origEdit = window.editTrade;
+window.editTrade = (id) => { window.closeAllActionMenus(); if(origEdit) origEdit(id); };
+
+const origDel = window.deleteTrade;
+window.deleteTrade = (id) => { window.closeAllActionMenus(); if(origDel) origDel(id); };
