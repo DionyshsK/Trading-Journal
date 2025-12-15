@@ -21,6 +21,7 @@ const db = getFirestore(app);
 // ==========================================
 window.auth = auth;
 
+let symbolChartInstance = null;
 let currentUserId = null;
 let currentAccountId = null;
 let currentAccountData = null;
@@ -488,126 +489,140 @@ function setupTradeListener(accId) {
     });
 }
 
-async function calcMetrics(trades) {
-    const offset = currentAccountData.pnlOffset || 0;
+async function calcMetrics(trades, isFilterMode = false) {
+    // 1. ΔΕΔΟΜΕΝΑ ΛΟΓΑΡΙΑΣΜΟΥ (Χρησιμοποιούμε ΟΛΕΣ τις συναλλαγές για Balance & Status)
+    const allTrades = window.currentTrades || [];
     const initBal = currentAccountData.initialBalance;
+    const offset = currentAccountData.pnlOffset || 0;
     
-    let netPnL = 0;
-    let wins = 0;
-    let tradeCount = 0;
+    // Υπολογισμός Πραγματικού Balance (Real Balance)
+    let realNetPnL = 0;
+    let realTotalFees = 0;
     
-    const today = new Date().toISOString().split('T')[0];
-    let todayPnL = 0;
+    allTrades.forEach(t => {
+        realNetPnL += t.pnl;
+        if (t.fees) realTotalFees += Math.abs(t.fees);
+    });
+    
+    const realActiveBal = initBal + (realNetPnL - offset) - realTotalFees;
+    let realPhaseProfit = realNetPnL - offset;
+    
+    // Ενημέρωση Global μεταβλητής
+    latestBalance = realActiveBal;
 
+    // 2. ΔΕΔΟΜΕΝΑ ΠΡΟΒΟΛΗΣ (Χρησιμοποιούμε τις ΦΙΛΤΡΑΡΙΣΜΕΝΕΣ συναλλαγές για PnL & Charts)
+    let viewNetPnL = 0;
+    let viewTotalFees = 0;
+    let wins = 0;
+    
+    // Στατιστικά για το γράφημα (από τα φιλτραρισμένα)
     const labels = ['Start'];
     const data = [initBal];
+    let runningBal = initBal;
 
     trades.forEach(t => {
-        // 1. Υπολογισμός Κέρδους/Ζημιάς
-        netPnL += t.pnl;
+        viewNetPnL += t.pnl;
+        if (t.fees) viewTotalFees += Math.abs(t.fees);
         
-        // 2. Στατιστικά (εξαιρούμε τις αναλήψεις)
         if (t.type !== 'Withdrawal') {
             if (t.pnl > 0) wins++;
-            if (t.date === today) todayPnL += t.pnl;
-            tradeCount++;
         }
+        
+        // Για το γράφημα
+        runningBal += t.pnl; 
+        // Αν θες το γράφημα να δείχνει την πραγματική πορεία των φιλτραρισμένων:
         const timePart = t.time ? t.time : '00:00';
-        labels.push(`${t.date}T${timePart}`); 
-
-        // 3. Ενημέρωση δεδομένων γραφήματος
-        const phaseAdjustedBalance = initBal + (netPnL - offset);
-        data.push(phaseAdjustedBalance);
+        labels.push(`${t.date}T${timePart}`);
+        data.push(runningBal);
     });
+    
+    // 3. ΕΝΗΜΕΡΩΣΗ UI
+    
+    // A. BALANCE (Δείχνει ΠΑΝΤΑ το πραγματικό)
+    document.getElementById('metric-balance').textContent = `$${realActiveBal.toFixed(2)}`;
 
-    const activeBal = initBal + (netPnL - offset);
-    let currentPhaseProfit = netPnL - offset;
-    latestBalance = activeBal;
+    // B. PNL & FEES (Δείχνουν τα φιλτραρισμένα)
+    // Αν είμαστε σε Funded και βλέπουμε All Trades, δείχνουμε το Phase Profit. Αν φιλτράρουμε, δείχνουμε το View PnL.
+    const displayPnL = (currentAccountData.type === 'Funded' && !isFilterMode && !currentAccountData.status.includes('FUNDED')) 
+                        ? realPhaseProfit 
+                        : viewNetPnL;
 
+    document.getElementById('metric-pnl').textContent = `$${displayPnL.toFixed(2)}`;
+    document.getElementById('metric-pnl').className = `text-2xl font-extrabold mt-1 ${displayPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+    
+    if(document.getElementById('metric-fees')) {
+        document.getElementById('metric-fees').textContent = `-$${viewTotalFees.toFixed(2)}`;
+    }
+
+    const tradeOnly = trades.filter(t => t.type !== 'Withdrawal');
+    document.getElementById('metric-trades').textContent = tradeOnly.length;
+    document.getElementById('metric-winrate').textContent = tradeOnly.length ? ((wins/tradeOnly.length)*100).toFixed(0)+'%' : '0%';
+
+    // 4. ΕΛΕΓΧΟΣ STATUS (FUNDED / DRAWDOWN) - Τρέχει ΜΟΝΟ με τα πραγματικά δεδομένα (realActiveBal)
     if (currentAccountData.type === 'Funded') {
         const totalDDLimit = initBal * (currentAccountData.totalDD / 100);
         const dailyDDLimit = initBal * (currentAccountData.dailyDD / 100);
         
+        // Υπολογισμός Daily Loss στα πραγματικά δεδομένα
+        const today = new Date().toISOString().split('T')[0];
+        let realTodayPnL = 0;
+        allTrades.forEach(t => { if(t.date === today && t.type !== 'Withdrawal') realTodayPnL += t.pnl; });
+
         let status = currentAccountData.status || 'Phase 1';
+        const breachedTotal = realActiveBal <= (initBal - totalDDLimit);
+        const breachedDaily = realTodayPnL <= -dailyDDLimit;
 
-        const breachedTotal = activeBal <= (initBal - totalDDLimit);
-        const breachedDaily = todayPnL <= -dailyDDLimit;
-
-        if (!status.includes('CANCELLED') && (breachedTotal || breachedDaily)) {
+        // Σημαντικό: Ο έλεγχος γίνεται στα real δεδομένα, οπότε το isFilterMode δεν είναι πια κρίσιμο, 
+        // αλλά το κρατάμε για ασφάλεια να μην κάνει writes όταν παίζουμε με φίλτρα.
+        if (!isFilterMode && !status.includes('CANCELLED') && (breachedTotal || breachedDaily)) {
             status = 'CANCELLED';
             if (breachedTotal) status += ' (Max DD)';
             if (breachedDaily) status += ' (Daily DD)';
             await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}`), { status: status });
             currentAccountData.status = status;
         }
-        else if (!status.includes('CANCELLED') && !status.includes('FUNDED')) {
+        else if (!isFilterMode && !status.includes('CANCELLED') && !status.includes('FUNDED')) {
             const t1Amt = initBal * (currentAccountData.targetP1 / 100);
             const t2Amt = initBal * (currentAccountData.targetP2 / 100);
 
-            if (status === 'Phase 1' && currentPhaseProfit >= t1Amt) {
+            if (status === 'Phase 1' && realPhaseProfit >= t1Amt) {
                 const next = currentAccountData.challengeType === '2step' ? 'Phase 2' : 'FUNDED';
-                await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}`), { 
-                    status: next, pnlOffset: netPnL 
-                });
+                await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}`), { status: next, pnlOffset: realNetPnL });
                 window.location.reload(); return;
             }
-            else if (status === 'Phase 2' && currentPhaseProfit >= t2Amt) {
-                await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}`), { 
-                    status: 'FUNDED', pnlOffset: netPnL 
-                });
+            else if (status === 'Phase 2' && realPhaseProfit >= t2Amt) {
+                await updateDoc(doc(db, `users/${currentUserId}/accounts/${currentAccountId}`), { status: 'FUNDED', pnlOffset: realNetPnL });
                 window.location.reload(); return;
             }
         }
 
+        // Ενημέρωση Bars (με βάση τα real δεδομένα πάντα)
         const badge = document.getElementById('dash-phase');
         badge.textContent = status;
         badge.className = status.includes('CANCELLED') ? 'bg-red-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white' : 
                           status.includes('FUNDED') ? 'bg-green-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white' : 
                           'bg-indigo-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
 
-        if (status.includes('Phase')) {
-            const target = status === 'Phase 1' ? currentAccountData.targetP1 : currentAccountData.targetP2;
-            const targetAmt = initBal * (target / 100);
-            document.getElementById('target-val').textContent = `$${targetAmt.toFixed(0)}`;
-            document.getElementById('bar-target').style.width = `${Math.min((Math.max(0, currentPhaseProfit)/targetAmt)*100, 100)}%`;
-        } else if (status.includes('FUNDED')) {
-            const available = Math.max(0, activeBal - initBal);
-            const targetEl = document.getElementById('target-val');
-            if(targetEl) {
-                targetEl.parentElement.innerHTML = `
-                    <div class="flex justify-between items-end mb-1">
-                        <span class="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Available</span>
-                        <span class="text-white font-mono text-sm">$${available.toFixed(2)}</span>
-                    </div>
-                    <button onclick="window.openWithdrawModal(${available})" class="w-full border border-green-600 text-green-500 hover:bg-green-500/10 text-[10px] font-bold py-1 rounded transition uppercase tracking-widest">Request Payout</button>
-                `;
-            }
-        }
-
         const breachLevel = initBal - totalDDLimit;
-        const distToBreach = activeBal - breachLevel;
+        const distToBreach = realActiveBal - breachLevel;
         const totalDDPct = Math.max(0, 100 - (distToBreach / totalDDLimit) * 100); 
         document.getElementById('mdd-val').textContent = `$${totalDDLimit.toFixed(0)}`;
         document.getElementById('bar-mdd').style.width = `${totalDDPct}%`;
-        document.getElementById('bar-mdd').className = totalDDPct > 90 ? 'bg-red-600 h-3 rounded-full' : 'bg-blue-500 h-3 rounded-full';
 
-        const dayDDPct = (Math.abs(Math.min(0, todayPnL)) / dailyDDLimit) * 100;
+        const dayDDPct = (Math.abs(Math.min(0, realTodayPnL)) / dailyDDLimit) * 100;
         document.getElementById('ddd-val').textContent = `$${dailyDDLimit.toFixed(0)}`;
         document.getElementById('bar-ddd').style.width = `${Math.min(dayDDPct, 100)}%`;
+        
+        // Target Bar
+        if (status.includes('Phase')) {
+             const target = status === 'Phase 1' ? currentAccountData.targetP1 : currentAccountData.targetP2;
+             const targetAmt = initBal * (target / 100);
+             document.getElementById('bar-target').style.width = `${Math.min((Math.max(0, realPhaseProfit)/targetAmt)*100, 100)}%`;
+        }
     }
 
+    // Γραφήματα (αυτά ενημερώνονται με τα φιλτραρισμένα data για να βλέπεις ανάλυση)
     updateChart(document.getElementById('growthChart').getContext('2d'), labels, data, document.documentElement.classList.contains('dark'));
-
-    document.getElementById('metric-balance').textContent = `$${activeBal.toFixed(2)}`;
-    
-    const displayPnL = (currentAccountData.type === 'Funded' && !currentAccountData.status.includes('FUNDED')) ? currentPhaseProfit : (netPnL - offset);
-    document.getElementById('metric-pnl').textContent = `$${displayPnL.toFixed(2)}`;
-    document.getElementById('metric-pnl').className = `text-2xl font-extrabold mt-1 ${displayPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
-    
-    const tradeOnly = trades.filter(t => t.type !== 'Withdrawal');
-    document.getElementById('metric-trades').textContent = tradeOnly.length;
-    document.getElementById('metric-winrate').textContent = tradeOnly.length ? ((wins/tradeOnly.length)*100).toFixed(0)+'%' : '0%';
-
     updateAnalysisCharts(trades);
 }
 
@@ -1078,7 +1093,7 @@ window.applyFilters = () => {
     });
 
     renderTrades([...filtered].reverse());
-    calcMetrics(filtered);
+    calcMetrics(filtered, true);
 };
 
 function updateSymbolFilterOptions(trades) {
@@ -1219,54 +1234,110 @@ window.editTrade = async (id) => {
 
 // Analysis Charts
 function updateAnalysisCharts(trades) {
+    // 1. Existing Logic for Days/Hours
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const dayPnL = [0,0,0,0,0,0,0];
     const hours = Array.from({length: 24}, (_, i) => i + ':00');
     const hourPnL = new Array(24).fill(0);
 
+    // 2. New Logic for Symbol Stats
+    const symbolStats = {};
+
     trades.forEach(t => {
         if (t.type === 'Withdrawal') return;
         
+        // Day & Hour Logic
         const d = new Date(t.date).getDay();
         dayPnL[d] += t.pnl;
-        
         if (t.time) {
             const h = parseInt(t.time.split(':')[0]); 
             if (!isNaN(h)) hourPnL[h] += t.pnl;
         }
+
+        // Symbol Logic
+        if (!symbolStats[t.symbol]) symbolStats[t.symbol] = { wins: 0, total: 0 };
+        symbolStats[t.symbol].total++;
+        if (t.pnl > 0) symbolStats[t.symbol].wins++;
     });
 
-    const ctxDay = document.getElementById('dayChart').getContext('2d');
-    if (dayChartInstance) dayChartInstance.destroy();
-    dayChartInstance = new Chart(ctxDay, {
-        type: 'bar',
-        data: {
-            labels: days,
-            datasets: [{
-                label: 'PnL ($)',
-                data: dayPnL,
-                backgroundColor: dayPnL.map(v => v >= 0 ? '#10b981' : '#ef4444'),
-                borderRadius: 4
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-    });
+    // --- CHART 1: Day Chart (Existing) ---
+    const ctxDay = document.getElementById('dayChart');
+    if (ctxDay) {
+        if (dayChartInstance) dayChartInstance.destroy();
+        dayChartInstance = new Chart(ctxDay.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: days,
+                datasets: [{
+                    label: 'PnL ($)',
+                    data: dayPnL,
+                    backgroundColor: dayPnL.map(v => v >= 0 ? '#10b981' : '#ef4444'),
+                    borderRadius: 4
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+    }
 
-    const ctxHour = document.getElementById('hourChart').getContext('2d');
-    if (hourChartInstance) hourChartInstance.destroy();
-    hourChartInstance = new Chart(ctxHour, {
-        type: 'bar',
-        data: {
-            labels: hours,
-            datasets: [{
-                label: 'PnL ($)',
-                data: hourPnL,
-                backgroundColor: hourPnL.map(v => v >= 0 ? '#6366f1' : '#ef4444'),
-                borderRadius: 2
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-    });
+    // --- CHART 2: Hour Chart (Existing) ---
+    const ctxHour = document.getElementById('hourChart');
+    if (ctxHour) {
+        if (hourChartInstance) hourChartInstance.destroy();
+        hourChartInstance = new Chart(ctxHour.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: hours,
+                datasets: [{
+                    label: 'PnL ($)',
+                    data: hourPnL,
+                    backgroundColor: hourPnL.map(v => v >= 0 ? '#6366f1' : '#ef4444'),
+                    borderRadius: 2
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+    }
+
+    // --- CHART 3: Symbol Doughnut (NEW) ---
+    const ctxSymbol = document.getElementById('symbolChart');
+    if (ctxSymbol) {
+        const labels = Object.keys(symbolStats);
+        const dataTotal = labels.map(s => symbolStats[s].total);
+        // Χρώματα για το γράφημα (παλέτα)
+        const bgColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+        if (symbolChartInstance) symbolChartInstance.destroy();
+        symbolChartInstance = new Chart(ctxSymbol.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: dataTotal,
+                    backgroundColor: bgColors,
+                    borderWidth: 0,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '70%', // Κενό στη μέση
+                plugins: {
+                    legend: { position: 'right', labels: { usePointStyle: true, color: document.documentElement.classList.contains('dark') ? 'white' : 'black' } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const sym = context.label;
+                                const stats = symbolStats[sym];
+                                const winRate = stats.total > 0 ? ((stats.wins / stats.total) * 100).toFixed(0) : 0;
+                                return `${sym}: ${stats.total} Trades (WR: ${winRate}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 }
 
 window.openDayDetails = (dateStr) => {
