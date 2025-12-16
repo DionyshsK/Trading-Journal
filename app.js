@@ -380,6 +380,41 @@ async function loadAccountsList() {
     }
 }
 
+// app.js: ~ γραμμή 466
+
+async function updateSettingsAccountsList() {
+    // Χρησιμοποιούμε την ίδια λογική με την loadAccountsList, αλλά στο νέο container
+    const q = query(collection(db, `users/${currentUserId}/accounts`), orderBy('createdAt', 'desc'));
+    const s = await getDocs(q);
+    const l = document.getElementById('settings-accounts-list');
+    
+    // Αφαιρούμε το κουμπί 'Add New Account' προσωρινά
+    l.innerHTML = ''; 
+
+    if (s.empty) {
+        l.innerHTML = '<p class="text-center text-gray-500 italic py-8">No accounts found. Start by adding one!</p>';
+    }
+    
+    s.forEach(d => {
+        const a = d.data();
+        const div = document.createElement('div');
+        div.className = "bg-gray-50 dark:bg-gray-700 p-4 rounded-xl shadow flex justify-between items-center border border-gray-100 dark:border-gray-600";
+        div.innerHTML = `
+            <div>
+                <h4 class="font-bold dark:text-white text-md">${a.name} <span class="text-xs text-indigo-500">(${d.id === currentAccountId ? 'Active' : 'Inactive'})</span></h4>
+                <p class="text-xs text-gray-500">${a.marketType} • ${a.type}</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="window.selectAccount('${d.id}')" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-bold hover:bg-indigo-700">Switch</button>
+                <button onclick="window.deleteAccount('${d.id}')" class="text-red-500 px-3 py-1.5 text-sm">Delete</button>
+            </div>`;
+        l.appendChild(div);
+    });
+    
+    // Επανατοποθετούμε το κουμπί
+    l.innerHTML += '<div class="flex justify-center py-4"><button onclick="window.openAccountWizard()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-indigo-700 shadow-lg transition flex items-center"><svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>Add New Account</button></div>';
+}
+
 window.selectAccount = async (id) => {
     if (tradeUnsubscribe) {
         tradeUnsubscribe();
@@ -495,15 +530,15 @@ async function calcMetrics(trades, isFilterMode = false) {
     const initBal = currentAccountData.initialBalance;
     const offset = currentAccountData.pnlOffset || 0;
     
-    // Υπολογισμός Πραγματικού Balance (Real Balance)
+// Υπολογισμός Πραγματικού Balance (Real Balance)
     let realNetPnL = 0;
     let realTotalFees = 0;
     
     allTrades.forEach(t => {
         realNetPnL += t.pnl;
-        if (t.fees) realTotalFees += Math.abs(t.fees);
+        if (t.fees) realTotalFees += t.fees; 
     });
-    
+
     const realActiveBal = initBal + (realNetPnL - offset) - realTotalFees;
     let realPhaseProfit = realNetPnL - offset;
     
@@ -520,9 +555,9 @@ async function calcMetrics(trades, isFilterMode = false) {
     const data = [initBal];
     let runningBal = initBal;
 
-    trades.forEach(t => {
+        trades.forEach(t => {
         viewNetPnL += t.pnl;
-        if (t.fees) viewTotalFees += Math.abs(t.fees);
+        if (t.fees) viewTotalFees += t.fees; // Αφαιρέθηκε το Math.abs().
         
         if (t.type !== 'Withdrawal') {
             if (t.pnl > 0) wins++;
@@ -551,7 +586,10 @@ async function calcMetrics(trades, isFilterMode = false) {
     document.getElementById('metric-pnl').className = `text-2xl font-extrabold mt-1 ${displayPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
     
     if(document.getElementById('metric-fees')) {
-        document.getElementById('metric-fees').textContent = `-$${viewTotalFees.toFixed(2)}`;
+        // Δείχνουμε την τιμή όπως είναι, με πρόσημο.
+        document.getElementById('metric-fees').textContent = `${viewTotalFees >= 0 ? '-' : '+'}$${Math.abs(viewTotalFees).toFixed(2)}`;
+        // Ενημερώνουμε και το χρώμα ανάλογα με το αν είναι έξοδο (κόκκινο) ή έσοδο (πράσινο)
+        document.getElementById('metric-fees').className = `text-2xl font-extrabold mt-1 ${viewTotalFees >= 0 ? 'text-red-500' : 'text-green-500'}`;
     }
 
     const tradeOnly = trades.filter(t => t.type !== 'Withdrawal');
@@ -843,11 +881,13 @@ document.getElementById('trade-form').addEventListener('submit', async (e) => {
         sl: parseFloat(document.getElementById('t-sl').value), 
         tp: parseFloat(document.getElementById('t-tp').value),
         exit: parseFloat(document.getElementById('t-exit').value), 
-        fees: parseFloat(document.getElementById('t-fees').value) || 0,
+        fees: -(parseFloat(document.getElementById('t-fees').value) || 0),
         pnl: parseFloat(document.getElementById('t-net-pnl').value) || 0, 
         notes: document.getElementById('t-notes').value,
         confidence: document.getElementById('t-conf').value, 
-        mistake: document.getElementById('t-mistake').value,
+        mistake: (document.getElementById('t-mistake').value === 'Other' 
+                 ? document.getElementById('t-mistake-other-text').value 
+                 : document.getElementById('t-mistake').value),
     };
 
     if (imgBase64) tradeData.image = imgBase64;
@@ -1038,11 +1078,18 @@ function renderCalendar() {
 // ==========================================
 
 window.switchTab = (t) => {
-    ['dashboard', 'accounts', 'profile', 'calendar'].forEach(i => document.getElementById(`tab-${i}`).classList.add('hidden'));
+    ['dashboard', 'accounts', 'settings', 'calendar'].forEach(i => document.getElementById(`tab-${i}`).classList.add('hidden'));
     document.getElementById(`tab-${t}`).classList.remove('hidden');
     document.getElementById('dropdown-content').classList.add('hidden');
     
     if (t === 'calendar' && currentAccountData) renderCalendar();
+    
+    // Εάν μεταβαίνουμε στις ρυθμίσεις, εμφανίζουμε by default το "Profile"
+    if (t === 'settings') {
+        window.showSettingsSection('settings-profile');
+        // Επίσης, φορτώνουμε τη λίστα των λογαριασμών για το settings-accounts tab
+        updateSettingsAccountsList();
+    }
 };
 
 const fileInput = document.getElementById('t-img');
@@ -1059,18 +1106,38 @@ const sl = document.getElementById('t-conf');
 const out = document.getElementById('conf-val');
 sl.oninput = function() { out.innerHTML = this.value; };
 
+// app.js: Νέος Listener για Personal Info (settings-profile)
 document.getElementById('profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const strategies = Array.from(document.querySelectorAll('.strat-chk:checked')).map(c => c.value);
     await updateDoc(doc(db, "users", currentUserId), {
         firstName: document.getElementById('prof-fname').value,
         lastName: document.getElementById('prof-lname').value,
         dob: document.getElementById('prof-dob').value,
         bio: document.getElementById('prof-bio').value,
+    });
+    alert("Profile Saved!");
+});
+
+// app.js: Νέος Listener για Trader DNA (settings-dna)
+document.getElementById('dna-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const strategies = Array.from(document.querySelectorAll('.strat-chk:checked')).map(c => c.value);
+    await updateDoc(doc(db, "users", currentUserId), {
         experience: document.getElementById('prof-exp').value,
         strategies
     });
-    alert("Profile Saved!");
+    alert("Trader DNA Saved!");
+});
+
+// Listener για το κουμπί αλλαγής κωδικού (Τώρα βρίσκεται στο Settings -> Security)
+document.getElementById('prof-reset-pass').addEventListener('click', async () => {
+    if (!auth.currentUser.email) return;
+    try {
+        await sendPasswordResetEmail(auth, auth.currentUser.email);
+        alert("Password reset link sent to your email!");
+    } catch (e) {
+        alert("Error sending reset link: " + e.message);
+    }
 });
 
 // Filtering
@@ -1143,6 +1210,10 @@ window.toggleTheme = (e) => {
     } else {
         localStorage.setItem('theme', 'light');
     }
+    if (window.currentTrades && window.currentTrades.length > 0 && currentAccountData) {
+        // Ξανατρέχουμε την calcMetrics (η οποία καλεί την updateAnalysisCharts)
+        window.applyFilters(); 
+    }
 };
 
 if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -1165,10 +1236,14 @@ window.viewTrade = async (id) => {
         }
 
         const el = document.getElementById('modal-content');
+        
+        // Υπολογισμός χρώματος για τα fees
+        const feeClass = trade.fees < 0 ? 'text-red-500' : 'text-green-500';
+
         el.innerHTML = `
             <div class="grid grid-cols-2 gap-4 text-sm mb-4">
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl space-y-1">
-                    <span class="text-xs text-gray-500 uppercase font-bold">Symbol</span>
+                    <span class="text-xs text-gray-500 uppercase font-bold">Symbol & Type</span>
                     <p class="text-xl font-bold text-gray-900 dark:text-white">${trade.symbol} <span class="${trade.type === 'Long' ? 'text-green-500' : 'text-red-500'} text-base">(${trade.type})</span></p>
                 </div>
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl space-y-1">
@@ -1179,16 +1254,27 @@ window.viewTrade = async (id) => {
             
             <div class="bg-indigo-50 dark:bg-indigo-900/30 p-4 rounded-xl border border-indigo-100 dark:border-indigo-800 mb-4">
                 <div class="grid grid-cols-3 gap-4 text-center mb-3">
-                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Entry</span><span class="font-mono font-bold dark:text-white">${trade.entry}</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Date / Time</span><span class="font-mono font-bold dark:text-white text-sm">${trade.date} ${trade.time || ''}</span></div>
                     <div><span class="block text-xs text-gray-500 uppercase font-bold">Size</span><span class="font-mono font-bold dark:text-white">${trade.size || 0} Lots</span></div>
-                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Fees</span><span class="font-mono font-bold text-red-400">$${trade.fees || 0}</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Fees</span><span class="font-mono font-bold ${feeClass}">${trade.fees >= 0 ? '-' : '+'}$${Math.abs(trade.fees).toFixed(2)}</span></div>
                 </div>
-                <div class="grid grid-cols-2 gap-4 text-center border-t border-indigo-200 dark:border-indigo-700 pt-3">
+                <div class="grid grid-cols-3 gap-4 text-center border-t border-indigo-200 dark:border-indigo-700 pt-3">
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Entry</span><span class="font-mono font-bold dark:text-white">${trade.entry}</span></div>
                     <div><span class="block text-xs text-red-500 uppercase font-bold">Stop Loss</span><span class="font-mono font-bold dark:text-gray-300">${trade.sl}</span></div>
                     <div><span class="block text-xs text-green-500 uppercase font-bold">Take Profit</span><span class="font-mono font-bold dark:text-gray-300">${trade.tp || '-'}</span></div>
                 </div>
+                <div class="grid grid-cols-3 gap-4 text-center border-t border-indigo-200 dark:border-indigo-700 pt-3 mt-3">
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Exit Price</span><span class="font-mono font-bold dark:text-white">${trade.exit || '-'}</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">R:R</span><span class="font-mono font-bold dark:text-white">${rrString}</span></div>
+                    <div><span class="block text-xs text-gray-500 uppercase font-bold">Confidence</span><span class="font-bold text-lg dark:text-white">${trade.confidence}/5</span></div>
+                </div>
             </div>
 
+            <div class="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600">
+                <span class="block text-xs text-gray-500 uppercase font-bold mb-2">Psychology / Mistake</span>
+                <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">${trade.mistake || 'None (Good Trade)'}</p>
+            </div>
+            
             <div class="mb-4">
                 <span class="block text-xs text-gray-500 uppercase font-bold mb-2">Notes</span>
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl text-gray-700 dark:text-gray-300 italic border border-gray-100 dark:border-gray-600">"${trade.notes || 'No notes added.'}"</div>
@@ -1451,3 +1537,41 @@ window.editTrade = (id) => { window.closeAllActionMenus(); if(origEdit) origEdit
 
 const origDel = window.deleteTrade;
 window.deleteTrade = (id) => { window.closeAllActionMenus(); if(origDel) origDel(id); };
+
+document.getElementById('t-mistake').addEventListener('change', (e) => {
+    const otherInput = document.getElementById('t-mistake-other-container');
+    if (e.target.value === 'Other') {
+        otherInput.classList.remove('hidden');
+    } else {
+        otherInput.classList.add('hidden');
+    }
+});
+
+// app.js: Νέα Συνάρτηση για εναλλαγή ενοτήτων Settings
+
+window.showSettingsSection = (sectionId) => {
+    // 1. Απόκρυψη όλων των ενοτήτων περιεχομένου
+    document.querySelectorAll('.settings-content').forEach(el => {
+        el.classList.add('hidden-step'); 
+        el.classList.remove('fade-in');
+    });
+
+    // 2. Εμφάνιση της επιλεγμένης ενότητας
+    const target = document.getElementById(sectionId);
+    if(target) {
+        target.classList.remove('hidden-step');
+        target.classList.add('fade-in');
+    }
+    
+    // 3. Ενημέρωση των κουμπιών πλοήγησης (χρώμα)
+    document.querySelectorAll('.settings-btn').forEach(btn => {
+        btn.classList.remove('bg-indigo-600', 'text-white', 'shadow-md');
+        btn.classList.add('hover:bg-gray-100', 'dark:hover:bg-gray-700', 'text-gray-700', 'dark:text-gray-300');
+    });
+
+    const activeBtn = document.getElementById(`btn-${sectionId}`);
+    if(activeBtn) {
+        activeBtn.classList.remove('hover:bg-gray-100', 'dark:hover:bg-gray-700', 'text-gray-700', 'dark:text-gray-300');
+        activeBtn.classList.add('bg-indigo-600', 'text-white', 'shadow-md');
+    }
+};
