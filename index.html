@@ -252,7 +252,10 @@
 
                 <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
                     <div class="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"><p class="text-xs font-semibold text-gray-500 uppercase">Balance</p><p id="metric-balance" class="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white tracking-tight">...</p></div>
-                    <div class="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"><p class="text-xs font-semibold text-gray-500 uppercase">Net PnL</p><p id="metric-pnl" class="text-2xl font-extrabold mt-1">...</p></div>
+                    <div class="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700">
+                        <p class="text-xs font-semibold text-gray-500 uppercase">PNL</p>
+                        <p id="metric-pnl" class="text-2xl font-extrabold mt-1">...</p>
+                    </div>
                     <div class="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"><p class="text-xs font-semibold text-gray-500 uppercase">Total Fees</p><p id="metric-fees" class="text-2xl font-extrabold mt-1 text-red-500">...</p></div>
                     
                     <div class="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"><p class="text-xs font-semibold text-gray-500 uppercase">Win Rate</p><p id="metric-winrate" class="text-2xl font-extrabold mt-1 text-gray-900 dark:text-white">...</p></div>
@@ -277,7 +280,7 @@
 
                                 <div class="grid grid-cols-2 gap-2">
                                     <input type="date" id="t-date" required class="w-full rounded-lg border border-gray-600 bg-gray-700 text-white p-3 outline-none transition focus:ring-2 focus:ring-indigo-500">
-                                    <input type="time" id="t-time" class="w-full rounded-lg border border-gray-600 bg-gray-700 text-white p-3 outline-none transition focus:ring-2 focus:ring-indigo-500">
+                                    <input type="text" id="t-time" placeholder="HH:MM" class="w-full rounded-lg border border-gray-600 bg-gray-700 text-white p-3 outline-none transition focus:ring-2 focus:ring-indigo-500">
                                 </div>
                                 
                                 <div class="grid grid-cols-3 gap-2">
@@ -300,7 +303,7 @@
                                 </div>
 
                                 <div class="grid grid-cols-3 gap-2 items-end">
-                                    <div><label class="text-[10px] text-gray-500 block mb-1 uppercase font-bold text-center">R:R</label><div id="disp-r-multiple" class="w-full rounded-lg bg-gray-800 border border-gray-700 text-indigo-400 p-2.5 text-center text-sm font-bold">--</div></div>
+                                    <div><input type="number" step="0.1" id="t-rr" placeholder="R:R" class="w-full rounded-lg bg-gray-800 border border-gray-700 text-indigo-400 p-2.5 text-center text-sm font-bold outline-none focus:border-indigo-500"></div>
                                     <div><label class="text-[10px] text-gray-500 block mb-1 uppercase font-bold text-center">Fees</label><input type="number" step="0.01" id="t-fees" placeholder="-0.00" class="w-full rounded-lg border border-gray-600 bg-gray-700 text-gray-300 p-2.5 text-center text-sm outline-none focus:border-orange-500 calc-trigger"></div>
                                     
                                     <div>
