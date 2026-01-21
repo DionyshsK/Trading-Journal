@@ -490,6 +490,17 @@
                                 <button id="prof-reset-pass" class="bg-gray-100 border border-gray-300 dark:bg-gray-700 dark:border-gray-600 px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-white text-sm transition">Send Password Reset Email</button>
                             </div>
 
+                            <div class="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
+                                <h4 class="font-bold text-lg dark:text-white mb-2">Automation & API</h4>
+                                <p class="text-sm text-gray-500 dark:text-gray-400 mb-3">Use this key to connect MetaTrader/cTrader to your journal.</p>
+                                
+                                <div class="flex gap-2">
+                                    <input type="text" id="prof-api-key" readonly placeholder="No API Key generated" class="w-full rounded-lg bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 text-gray-500 font-mono text-sm p-3">
+                                    <button onclick="window.generateApiKey()" class="bg-indigo-600 text-white px-4 rounded-lg font-bold hover:bg-indigo-700 transition shadow-lg">Generate</button>
+                                </div>
+                                <p class="text-xs text-orange-500 mt-1 font-bold hidden" id="api-msg">Key generated! Don't share this.</p>
+                            </div>
+
                             <div class="pt-4 border-t border-red-200 dark:border-red-900/50">
                                 <h4 class="font-bold text-xl text-red-500 mb-2">Danger Zone</h4>
                                 <p class="text-sm text-gray-500 dark:text-gray-400 mb-3">Permanently delete your entire user profile and all associated data, including trades and accounts. This action is irreversible.</p>

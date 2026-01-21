@@ -77,6 +77,20 @@ window.deleteUserProfile = async () => {
     }
 };
 
+window.generateApiKey = async () => {
+    if (!confirm("Generate new API Key? Any old connections will stop working.")) return;
+    
+    // Δημιουργία τυχαίου κλειδιού
+    const newKey = 'trader_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now().toString(36);
+    
+    await updateDoc(doc(db, "users", currentUserId), {
+        apiKey: newKey
+    });
+    
+    document.getElementById('prof-api-key').value = newKey;
+    document.getElementById('api-msg').classList.remove('hidden');
+};
+
 window.togglePass = (id) => {
     const input = document.getElementById(id);
     input.type = input.type === "password" ? "text" : "password";
@@ -195,6 +209,7 @@ forgotForm.addEventListener('submit', async (e) => {
 });
 
 // Auth State Listener
+// Auth State Listener
 onAuthStateChanged(auth, async (u) => {
     if (u) {
         currentUserId = u.uid;
@@ -206,7 +221,7 @@ onAuthStateChanged(auth, async (u) => {
 
         const d = await getDoc(doc(db, "users", currentUserId));
         if (d.exists()) {
-            const data = d.data();
+            const data = d.data(); // Ορισμός του data
             document.getElementById('header-name').textContent = data.username || "Trader";
             
             if (!data.onboardingComplete) {
@@ -221,12 +236,16 @@ onAuthStateChanged(auth, async (u) => {
             document.getElementById('prof-bio').value = data.bio || "";
             document.getElementById('prof-exp').value = data.experience || "0-1";
             
-            // Markets no longer exist in profile logic
+            // --- 🛡️ ΔΙΟΡΘΩΣΗ: Το API Key πρέπει να είναι ΜΕΣΑ στα άγκιστρα ---
+            document.getElementById('prof-api-key').value = data.apiKey || "";
+
+            // Strategies
             (data.strategies || []).forEach(v => {
                 const el = document.querySelector(`.strat-chk[value="${v}"]`);
                 if (el) el.checked = true;
             });
         }
+        
         loadAccountsList();
     } else {
         currentUserId = null;
@@ -349,9 +368,13 @@ async function loadAccountsList() {
     const l = document.getElementById('accounts-list');
     l.innerHTML = '';
 
+    // === 🔴 ΔΙΟΡΘΩΣΗ: Αν δεν υπάρχουν λογαριασμοί ===
     if (s.empty) {
         document.getElementById('no-accounts-msg').classList.remove('hidden');
         document.getElementById('dashboard-content').classList.add('hidden');
+        
+        // ΕΔΩ ΕΙΝΑΙ Η ΛΥΣΗ: Εμφανίζουμε το Dashboard Tab χειροκίνητα
+        window.switchTab('dashboard'); 
         return;
     }
     
@@ -424,58 +447,71 @@ window.selectAccount = async (id) => {
     currentAccountId = id;
     localStorage.setItem('lastAccountId', id);
 
-    const snap = await getDoc(doc(db, `users/${currentUserId}/accounts/${id}`));
+    try {
+        const snap = await getDoc(doc(db, `users/${currentUserId}/accounts/${id}`));
 
-    if (snap.exists()) {
-        currentAccountData = snap.data();
+        if (snap.exists()) {
+            currentAccountData = snap.data();
 
-        document.getElementById('menu-current-acc').textContent = currentAccountData.name;
-        document.getElementById('dash-acc-name').textContent = currentAccountData.name;
-        document.getElementById('dash-prop-name').textContent = currentAccountData.type === 'Funded' ? currentAccountData.propFirm : 'Live';
-        document.getElementById('dashboard-content').classList.remove('hidden');
+            // --- 🛡️ SAFETY FIX: Ορίζουμε default τιμές για να μην κρασάρει ---
+            // Αν δεν υπάρχει status, βάζουμε 'Phase 1' για να μην σκάσει το .includes()
+            const safeStatus = currentAccountData.status || 'Phase 1';
+            const safeType = currentAccountData.type || 'Live';
+            const initBal = currentAccountData.initialBalance || 0;
+            // -------------------------------------------------------------
 
-        if (chartInstance) {
-            chartInstance.destroy();
-            chartInstance = null;
+            document.getElementById('menu-current-acc').textContent = currentAccountData.name;
+            document.getElementById('dash-acc-name').textContent = currentAccountData.name;
+            document.getElementById('dash-prop-name').textContent = safeType === 'Funded' ? currentAccountData.propFirm : 'Live';
+            
+            // Εμφανίζουμε τα περιεχόμενα ΤΩΡΑ, πριν γίνουν οι υπολογισμοί
+            document.getElementById('dashboard-content').classList.remove('hidden');
+
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+
+            if (safeType === 'Funded') {
+                document.getElementById('funded-stats-container').classList.remove('hidden');
+                
+                const maxDDVal = initBal * ((currentAccountData.totalDD || 0) / 100);
+                const dailyDDVal = initBal * ((currentAccountData.dailyDD || 0) / 100);
+                
+                document.getElementById('mdd-val').textContent = `$${maxDDVal.toFixed(0)}`;
+                document.getElementById('ddd-val').textContent = `$${dailyDDVal.toFixed(0)}`;
+
+                // Χρησιμοποιούμε το safeStatus για να μην κρασάρει
+                const targetPct = safeStatus.includes('Phase 2') ? (currentAccountData.targetP2 || 0) : (currentAccountData.targetP1 || 0);
+                const targetAmt = initBal * (targetPct / 100);
+                document.getElementById('target-val').textContent = `$${targetAmt.toFixed(0)}`;
+
+                document.getElementById('bar-mdd').style.width = '0%';
+                document.getElementById('bar-ddd').style.width = '0%';
+                document.getElementById('bar-target').style.width = '0%';
+                
+                const badge = document.getElementById('dash-phase');
+                badge.textContent = safeStatus;
+                
+                // Logic χρωμάτων Status
+                if (safeStatus.includes('CANCELLED') || safeStatus.includes('FAILED')) 
+                    badge.className = 'bg-red-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
+                else if (safeStatus.includes('FUNDED')) 
+                    badge.className = 'bg-green-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
+                else 
+                    badge.className = 'bg-indigo-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
+
+            } else {
+                document.getElementById('funded-stats-container').classList.add('hidden');
+            }
+            
+            // Ενεργοποίηση καρτέλας Dashboard
+            window.switchTab('dashboard');
+            setupTradeListener(id);
         }
-
-        if (currentAccountData.type === 'Funded') {
-            document.getElementById('funded-stats-container').classList.remove('hidden');
-            
-            const initBal = currentAccountData.initialBalance;
-            const maxDDVal = initBal * (currentAccountData.totalDD / 100);
-            const dailyDDVal = initBal * (currentAccountData.dailyDD / 100);
-            
-            document.getElementById('mdd-val').textContent = `$${maxDDVal.toFixed(0)}`;
-            document.getElementById('ddd-val').textContent = `$${dailyDDVal.toFixed(0)}`;
-
-            // Υπολογισμός αρχικού στόχου για εμφάνιση
-            const targetPct = currentAccountData.status.includes('Phase 2') ? currentAccountData.targetP2 : currentAccountData.targetP1;
-            const targetAmt = initBal * (targetPct / 100);
-            document.getElementById('target-val').textContent = `$${targetAmt.toFixed(0)}`;
-
-            
-            document.getElementById('bar-mdd').style.width = '0%';
-            document.getElementById('bar-ddd').style.width = '0%';
-            document.getElementById('bar-target').style.width = '0%';
-            
-            const status = currentAccountData.status || 'Phase 1';
-            const badge = document.getElementById('dash-phase');
-            badge.textContent = status;
-            
-            if (status.includes('CANCELLED') || status.includes('FAILED')) 
-                badge.className = 'bg-red-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
-            else if (status.includes('FUNDED')) 
-                badge.className = 'bg-green-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
-            else 
-                badge.className = 'bg-indigo-600 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest shadow-lg text-white';
-
-        } else {
-            document.getElementById('funded-stats-container').classList.add('hidden');
-        }
-        
-        window.switchTab('dashboard');
-        setupTradeListener(id);
+    } catch (error) {
+        console.error("Critical Error loading account:", error);
+        alert("Error loading account data. Check console (F12) for details.");
     }
 };
 
@@ -885,16 +921,26 @@ function calculateMath() {
     const entry = parseFloat(document.getElementById('t-entry').value) || 0;
     const sl = parseFloat(document.getElementById('t-sl').value) || 0;
     const tp = parseFloat(document.getElementById('t-tp').value) || 0;
+    const exit = parseFloat(document.getElementById('t-exit').value) || 0;
     
+    // 1. Υπολογισμός Pips Ρίσκου
     if (entry && sl) {
         const riskDist = Math.abs(entry - sl);
         document.getElementById('disp-risk-pips').textContent = `Risk: ${(riskDist * 10000).toFixed(1)} pips`;
 
+        // 2. Υπολογισμός R:R με βάση το TP
         if (tp) {
             const rewardDist = Math.abs(tp - entry);
             const rr = riskDist > 0 ? (rewardDist / riskDist) : 0;
-            // ΑΛΛΑΓΗ: Ενημερώνουμε το value του input
             document.getElementById('t-rr').value = rr.toFixed(1);
+        }
+        
+        // 3. Υπολογισμός Πραγματικού R:R με βάση το Exit (αν υπάρχει)
+        if (exit) {
+            const actualReward = Math.abs(exit - entry);
+            const actualRR = riskDist > 0 ? (actualReward / riskDist) : 0;
+            // Μπορείς να ενημερώνεις το πεδίο R:R με το πραγματικό αν έχει κλείσει το trade
+            document.getElementById('t-rr').value = actualRR.toFixed(1);
         }
     }
 }
@@ -990,9 +1036,14 @@ function renderTrades(trades) {
     
     trades.forEach(t => {
         const tr = document.createElement('tr'); 
-        tr.className = "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition relative"; // Πρόσθεσα relative
-        
-        // ... (Ο κώδικας για το rrStr και το Withdrawal μένει ίδιος μέχρι το else) ...
+        tr.className = "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition relative"; 
+
+        // Έλεγχος αν το trade είναι "Ημιτελές" (αυτόματο import χωρίς screenshot/notes)
+        // Θεωρούμε ημιτελές αν δεν έχει εικόνα ΚΑΙ δεν είναι ανάληψη
+        const isIncomplete = false;
+        const rowClass = isIncomplete ? "bg-orange-50 dark:bg-orange-900/10 border-l-4 border-l-orange-500" : "";
+        if(isIncomplete) tr.className += " " + rowClass;
+
         let rrStr = "-"; 
         if (t.entry && t.sl && t.tp && t.type !== 'Withdrawal') {
             const risk = Math.abs(t.entry - t.sl); 
@@ -1001,29 +1052,37 @@ function renderTrades(trades) {
         }
 
         if (t.type === 'Withdrawal') {
-             tr.innerHTML = `...`; // (Κράτησε το ίδιο HTML για το withdrawal που είχες)
+             // ... (ο κώδικας withdrawal μένει ίδιος)
+             tr.innerHTML = `<td colspan="5" class="px-6 py-4 text-center font-bold text-green-500">💰 WITHDRAWAL: $${Math.abs(t.pnl).toFixed(2)}</td>`;
         } else {
+            // Αν είναι incomplete, δείχνουμε κουμπί Upload
+            const actionBtn = isIncomplete 
+                ? `<button onclick="window.editTrade('${t.id}')" class="flex items-center gap-1 bg-orange-100 text-orange-600 dark:bg-orange-900 dark:text-orange-300 px-3 py-1 rounded-full text-xs font-bold shadow-sm hover:scale-105 transition">
+                     📸 Add Info
+                   </button>`
+                : `<button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
+                   </button>`;
+
             tr.innerHTML = `
-                <td class="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">${t.date}</td>
-                <td class="px-6 py-4 text-sm font-bold text-gray-700 dark:text-gray-200">${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span></td>
+                <td class="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">
+                    ${t.date}<br><span class="text-xs text-gray-400">${t.time || ''}</span>
+                </td>
+                <td class="px-6 py-4 text-sm font-bold text-gray-700 dark:text-gray-200">
+                    ${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span>
+                    ${isIncomplete ? '<span class="block text-[10px] text-orange-500 font-bold uppercase mt-1">Pending Review</span>' : ''}
+                </td>
                 <td class="px-6 py-4 text-sm text-right font-mono text-indigo-500 font-bold">${rrStr}</td>
                 <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">
                     ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
                 </td>
-                <td class="px-6 py-4 text-sm text-right relative">
-                    <button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
-                    </button>
+                <td class="px-6 py-4 text-sm text-right relative flex justify-end items-center gap-2">
+                    ${actionBtn}
+                    
                     <div id="menu-${t.id}" class="hidden absolute right-10 top-2 z-50 w-36 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden text-left">
-                        <button onclick="window.viewTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">
-                            📂 View
-                        </button>
-                        <button onclick="window.editTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">
-                            ✏️ Edit
-                        </button>
-                        <button onclick="window.deleteTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center">
-                            ✕ Delete
-                        </button>
+                        <button onclick="window.viewTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">📂 View</button>
+                        <button onclick="window.editTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">✏️ Edit</button>
+                        <button onclick="window.deleteTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center">✕ Delete</button>
                     </div>
                 </td>`;
         }
@@ -1361,15 +1420,18 @@ window.viewTrade = async (id) => {
         document.getElementById('details-modal').classList.remove('hidden');
     }
 };
+
 window.editTrade = async (id) => {
     const trade = window.currentTrades.find(t => t.id === id);
     if (!trade) return;
 
+    // Εμφάνιση της φόρμας αν είναι κρυφή (σε κινητά)
     const container = document.getElementById('trade-form-container');
     if (container.classList.contains('hidden')) {
         window.toggleMobileTradeForm();
     }
     
+    // Συμπλήρωση των βασικών πεδίων της φόρμας
     document.getElementById('edit-trade-id').value = id;
     document.getElementById('t-date').value = trade.date;
     document.getElementById('t-time').value = trade.time || ""; 
@@ -1385,12 +1447,26 @@ window.editTrade = async (id) => {
     document.getElementById('t-notes').value = trade.notes;
     document.getElementById('t-conf').value = trade.confidence;
     document.getElementById('t-mistake').value = trade.mistake || ""; 
+    
+    // Σωστή ανάθεση της τιμής PnL
+    document.getElementById('t-net-pnl').value = trade.pnl;
 
+    // Αλλαγή κειμένου στο κουμπί και εμφάνιση του Cancel
     document.getElementById('add-trade-btn').textContent = "Update Trade";
     document.getElementById('cancel-edit-btn').classList.remove('hidden');
     document.getElementById('conf-val').textContent = trade.confidence;
     
+    // 🎨 ΔΙΟΡΘΩΣΗ ΧΡΩΜΑΤΟΣ PnL
+    // Αφαιρούμε τα παλιά χρώματα και βάζουμε το σωστό (πράσινο για κέρδος, κόκκινο για χασούρα)
+    const pnlInput = document.getElementById('t-net-pnl');
+    pnlInput.classList.remove('text-green-500', 'text-red-500', 'text-white'); 
+    pnlInput.classList.add(trade.pnl >= 0 ? 'text-green-500' : 'text-red-500');
+
+    // ⚡ ΕΝΕΡΓΟΠΟΙΗΣΗ ΑΥΤΟΜΑΤΟΥ R:R
+    // Στέλνουμε ένα 'input' event για να τρέξει η συνάρτηση calculateMath
     document.getElementById('t-entry').dispatchEvent(new Event('input'));
+    
+    // Ομαλή μετακίνηση στη φόρμα
     document.getElementById('trade-form').scrollIntoView({ behavior: 'smooth' });
 };
 
