@@ -448,6 +448,12 @@ window.selectAccount = async (id) => {
             
             document.getElementById('mdd-val').textContent = `$${maxDDVal.toFixed(0)}`;
             document.getElementById('ddd-val').textContent = `$${dailyDDVal.toFixed(0)}`;
+
+            // Υπολογισμός αρχικού στόχου για εμφάνιση
+            const targetPct = currentAccountData.status.includes('Phase 2') ? currentAccountData.targetP2 : currentAccountData.targetP1;
+            const targetAmt = initBal * (targetPct / 100);
+            document.getElementById('target-val').textContent = `$${targetAmt.toFixed(0)}`;
+
             
             document.getElementById('bar-mdd').style.width = '0%';
             document.getElementById('bar-ddd').style.width = '0%';
@@ -619,10 +625,87 @@ async function calcMetrics(trades, isFilterMode = false) {
     updateAnalysisCharts(trades);
 }
 
-// Βοηθητική για να μην γεμίζουμε την calcMetrics (αν δεν την έχεις, βάλε τον κώδικα status check μέσα στην calcMetrics όπως ήταν πριν)
-function updateFundedUI(bal, profit, trades, init, off) {
-   // Επανάφερε τη λογική ελέγχου Status που είχες, χρησιμοποιώντας το 'bal' (που είναι το Net Balance)
-   // ... (ο κώδικας ελέγχου status παραμένει ως είχε στο προηγούμενο βήμα)
+// ==========================================
+// 🛡️ FUNDED ACCOUNT UI UPDATER (FIXED)
+// ==========================================
+function updateFundedUI(currentBal, currentProfit, trades, initialBal) {
+    if (!currentAccountData || currentAccountData.type !== 'Funded') return;
+
+    // 1. Ρύθμιση Στόχου (Target) ανάλογα με τη Φάση
+    let targetPercent = 0;
+    if (currentAccountData.status.includes('Phase 1')) {
+        targetPercent = currentAccountData.targetP1 || 0;
+    } else if (currentAccountData.status.includes('Phase 2')) {
+        targetPercent = currentAccountData.targetP2 || 0;
+    }
+    
+    // Υπολογισμός Ποσού Στόχου ($)
+    const targetAmount = initialBal * (targetPercent / 100);
+    
+    // Ενημέρωση κειμένου Target στο UI (π.χ. $1000)
+    const targetValEl = document.getElementById('target-val');
+    if(targetValEl) targetValEl.textContent = `$${targetAmount.toFixed(0)}`;
+
+    // Υπολογισμός Προόδου Μπάρας Στόχου
+    let targetProgress = 0;
+    if (targetAmount > 0 && currentProfit > 0) {
+        targetProgress = (currentProfit / targetAmount) * 100;
+    }
+    // Clamp (να μην ξεπερνάει το 100% ή το 0%)
+    targetProgress = Math.min(Math.max(targetProgress, 0), 100);
+
+
+    // 2. Υπολογισμός Max Drawdown
+    // Total DD Limit (π.χ. 10% του αρχικού)
+    const maxDDLimit = initialBal * (currentAccountData.totalDD / 100);
+    // Τρέχον Drawdown (Αρχικό Υπόλοιπο - Τρέχον Υπόλοιπο)
+    // Αν το Balance είναι μεγαλύτερο του αρχικού, το DD είναι 0.
+    const currentDD = initialBal - currentBal; 
+    
+    let mddProgress = 0;
+    if (currentDD > 0 && maxDDLimit > 0) {
+        mddProgress = (currentDD / maxDDLimit) * 100;
+    }
+    mddProgress = Math.min(Math.max(mddProgress, 0), 100);
+
+
+    // 3. Υπολογισμός Daily Drawdown
+    // Daily DD Limit (π.χ. 5% του αρχικού)
+    const dailyDDLimit = initialBal * (currentAccountData.dailyDD / 100);
+    
+    // Υπολογισμός PnL ημέρας (σημερινά trades μόνο)
+    // Χρησιμοποιούμε την ημερομηνία συστήματος (local) για να βρούμε τα σημερινά
+    const todayStr = new Date().toLocaleDateString('en-CA'); // Format: YYYY-MM-DD
+    
+    let todayPnL = 0;
+    trades.forEach(t => {
+        if (t.date === todayStr) {
+            // Αθροίζουμε PnL + Fees (καθώς τα fees μετράνε στο drawdown)
+            todayPnL += (t.pnl + (t.fees || 0));
+        }
+    });
+
+    let dddProgress = 0;
+    // Αν το todayPnL είναι αρνητικό, έχουμε drawdown
+    if (todayPnL < 0 && dailyDDLimit > 0) {
+        dddProgress = (Math.abs(todayPnL) / dailyDDLimit) * 100;
+    }
+    dddProgress = Math.min(Math.max(dddProgress, 0), 100);
+
+
+    // 4. Εφαρμογή στο DOM (CSS Widths & Colors)
+    const barTarget = document.getElementById('bar-target');
+    const barMdd = document.getElementById('bar-mdd');
+    const barDdd = document.getElementById('bar-ddd');
+
+    if (barTarget) barTarget.style.width = `${targetProgress}%`;
+    if (barMdd) barMdd.style.width = `${mddProgress}%`;
+    if (barDdd) barDdd.style.width = `${dddProgress}%`;
+
+    // Extra: Χρωματισμός αν πλησιάζουμε το όριο (προαιρετικό)
+    // Αν το Daily Drawdown περάσει το 80%, κάνε την μπάρα έντονο κόκκινο
+    if (dddProgress > 80) barDdd.className = "bg-red-600 h-3 rounded-full transition-all duration-700 ease-out";
+    else barDdd.className = "bg-gradient-to-r from-rose-400 to-rose-600 h-3 rounded-full transition-all duration-700 ease-out";
 }
 
 // ==========================================
@@ -634,7 +717,7 @@ function updateChart(ctx, labels, data, isDark) {
     if (!chartCanvas) return;
     
     const timeData = labels.map((dateStr, index) => ({
-        x: new Date(dateStr), // Μετατροπή σε Date object που περιέχει ΚΑΙ την ώρα
+        x: new Date(dateStr), 
         y: data[index]
     }));
 
@@ -646,6 +729,11 @@ function updateChart(ctx, labels, data, isDark) {
             y: lastBalance 
         });
     }
+
+    // === 🔴 STEP 1: Βρίσκουμε την Ακριβή Αρχή και Τέλος ===
+    // Αυτό είναι το κλειδί. Παίρνουμε το timestamp του πρώτου και του τελευταίου σημείου.
+    const xMin = timeData.length > 0 ? timeData[0].x.getTime() : undefined;
+    const xMax = timeData.length > 0 ? timeData[timeData.length - 1].x.getTime() : undefined;
 
     const context = chartCanvas.getContext('2d');
     const zoomLvl = 0.1;
@@ -670,13 +758,13 @@ function updateChart(ctx, labels, data, isDark) {
                 backgroundColor: 'rgba(79,70,229,0.1)',
                 borderWidth: 2,
                 fill: true,
-                stepped: true, // Σκαλοπάτια
+                stepped: true,
                 pointRadius: (ctx) => {
                     const index = ctx.dataIndex;
                     const data = ctx.dataset.data;
-
-                    if (index === data.length - 1) return 3;
-
+                    // Κρύβουμε τελείως τα σημεία στις άκρες για να μην κόβονται
+                    if (index === 0 || index === data.length - 1) return 0;
+                    
                     if (data[index + 1] && data[index].x.getTime() === data[index + 1].x.getTime()) {
                         return 0;
                     }
@@ -689,13 +777,18 @@ function updateChart(ctx, labels, data, isDark) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: {
+                padding: {
+                    left: 0,
+                    right: 0 // Σιγουρεύουμε ότι δεν υπάρχει padding στο layout
+                }
+            },
             plugins: {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
                         title: (context) => {
                             const date = new Date(context[0].parsed.x);
-                            // ΑΛΛΑΓΗ: Εμφανίζουμε και την ώρα στο Tooltip
                             return date.toLocaleDateString('en-US', { 
                                 month: 'short', day: 'numeric', year: 'numeric', 
                                 hour: '2-digit', minute:'2-digit' 
@@ -711,18 +804,25 @@ function updateChart(ctx, labels, data, isDark) {
                 },
                 zoom: {
                     pan: { enabled: true, mode: 'x' },
-                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+                    limits: {
+                        x: { min: xMin, max: xMax } // Όρια και στο Zoom
+                    }
                 }
             },
             scales: {
                 x: {
                     type: 'time',
+                    offset: false, // Κρατάμε και το offset false
+                    
+                    // === 🔴 STEP 2: Καρφώνουμε τα όρια (Hard Limits) ===
+                    min: xMin,
+                    max: xMax,
+                    
                     time: {
-                        // ΑΛΛΑΓΗ: Αφαιρέσαμε το unit: 'day' για να διαλέγει μόνο του (μέρα ή ώρα)
-                        // ή μπορούμε να βάλουμε minUnit: 'minute' αν θέλουμε πολλή λεπτομέρεια
                         tooltipFormat: 'MMM dd, HH:mm',
                         displayFormats: {
-                            hour: 'MMM dd HH:mm', // Πώς φαίνεται όταν κάνεις zoom
+                            hour: 'MMM dd HH:mm',
                             day: 'MMM dd'
                         }
                     },
@@ -733,7 +833,8 @@ function updateChart(ctx, labels, data, isDark) {
                     ticks: {
                         color: isDark ? '#9ca3af' : '#4b5563',
                         maxRotation: 0,
-                        autoSkip: true
+                        autoSkip: true,
+                        align: 'inner' // Σπρώχνει τα γράμματα μέσα για να μην εξέχουν
                     }
                 },
                 y: {
