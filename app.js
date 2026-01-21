@@ -593,16 +593,18 @@ async function calcMetrics(trades, isFilterMode = false) {
     
     // FEES DISPLAY
     if(document.getElementById('metric-fees')) {
-        const isPositive = viewFeesSum >= 0; // Θετικό = Έσοδο (Πράσινο)
-        const color = isPositive ? 'text-green-500' : 'text-red-500'; 
-        // Αν είναι αρνητικό (Έξοδο), το μείον υπάρχει ήδη στο viewFeesSum
-        // Αν είναι θετικό (Έσοδο), βάζουμε εμείς το +
-        const sign = viewFeesSum > 0 ? '+' : '';
-        
-        document.getElementById('metric-fees').textContent = `${sign}${viewFeesSum.toFixed(2)}`;
-        document.getElementById('metric-fees').className = `text-2xl font-extrabold mt-1 ${color}`;
+    // Τα fees είναι έξοδα, άρα συνήθως αρνητικά (π.χ. -4.13)
+    // Αν είναι αρνητικά, τα δείχνουμε κόκκινα. Αν είναι θετικά (rebate), πράσινα.
+    const isPositiveFee = viewFeesSum > 0; 
+    const feeColor = isPositiveFee ? 'text-emerald-400' : 'text-rose-400';
+    
+    // Το viewFeesSum περιέχει ήδη το πρόσημο (-) αν είναι αρνητικό
+    // Προσθέτουμε το (+) μόνο αν είναι πάνω από μηδέν
+    const sign = isPositiveFee ? '+' : '';
+    
+    document.getElementById('metric-fees').textContent = `${sign}${viewFeesSum.toFixed(2)}`;
+    document.getElementById('metric-fees').className = `text-2xl font-extrabold mt-1 ${feeColor}`;
     }
-
     const tradeOnly = trades.filter(t => t.type !== 'Withdrawal');
     document.getElementById('metric-trades').textContent = tradeOnly.length;
     document.getElementById('metric-winrate').textContent = tradeOnly.length ? ((wins/tradeOnly.length)*100).toFixed(0)+'%' : '0%';
@@ -904,7 +906,9 @@ function renderTrades(trades) {
                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">${t.date}</td>
                 <td class="px-6 py-4 text-sm font-bold text-gray-700 dark:text-gray-200">${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span></td>
                 <td class="px-6 py-4 text-sm text-right font-mono text-indigo-500 font-bold">${rrStr}</td>
-                <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">${t.pnl.toFixed(2)}</td>
+                <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">
+                    ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
+                </td>
                 <td class="px-6 py-4 text-sm text-right relative">
                     <button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
                         <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
@@ -1193,11 +1197,11 @@ window.viewTrade = async (id) => {
         const tradePnL = trade.pnl; 
 
         // Logic Χρωμάτων Fees
-        let feeColor = 'text-gray-500';
-        if (rawFees > 0) feeColor = 'text-green-500'; // Θετικό = Έσοδο
-        if (rawFees < 0) feeColor = 'text-red-500';   // Αρνητικό = Έξοδο
-        
-        const feeDisplay = `${rawFees > 0 ? '+' : ''}${rawFees.toFixed(2)}`;
+        let feeColorClass = 'text-gray-500'; // Αλλάξαμε το όνομα για ασφάλεια
+        if (trade.fees > 0) feeColorClass = 'text-green-500'; 
+        if (trade.fees < 0) feeColorClass = 'text-red-500';   
+
+        const feeDisplay = `${trade.fees > 0 ? '+' : ''}${trade.fees.toFixed(2)}`;
 
         // R:R Logic
         let rrString = trade.rr ? parseFloat(trade.rr).toFixed(1) + ":1" : "-";
