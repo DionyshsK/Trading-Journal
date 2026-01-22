@@ -1038,12 +1038,6 @@ function renderTrades(trades) {
         const tr = document.createElement('tr'); 
         tr.className = "border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition relative"; 
 
-        // Έλεγχος αν το trade είναι "Ημιτελές" (αυτόματο import χωρίς screenshot/notes)
-        // Θεωρούμε ημιτελές αν δεν έχει εικόνα ΚΑΙ δεν είναι ανάληψη
-        const isIncomplete = false;
-        const rowClass = isIncomplete ? "bg-orange-50 dark:bg-orange-900/10 border-l-4 border-l-orange-500" : "";
-        if(isIncomplete) tr.className += " " + rowClass;
-
         let rrStr = "-"; 
         if (t.entry && t.sl && t.tp && t.type !== 'Withdrawal') {
             const risk = Math.abs(t.entry - t.sl); 
@@ -1052,32 +1046,23 @@ function renderTrades(trades) {
         }
 
         if (t.type === 'Withdrawal') {
-             // ... (ο κώδικας withdrawal μένει ίδιος)
              tr.innerHTML = `<td colspan="5" class="px-6 py-4 text-center font-bold text-green-500">💰 WITHDRAWAL: $${Math.abs(t.pnl).toFixed(2)}</td>`;
         } else {
-            // Αν είναι incomplete, δείχνουμε κουμπί Upload
-            const actionBtn = isIncomplete 
-                ? `<button onclick="window.editTrade('${t.id}')" class="flex items-center gap-1 bg-orange-100 text-orange-600 dark:bg-orange-900 dark:text-orange-300 px-3 py-1 rounded-full text-xs font-bold shadow-sm hover:scale-105 transition">
-                     📸 Add Info
-                   </button>`
-                : `<button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
-                   </button>`;
-
             tr.innerHTML = `
                 <td class="px-6 py-4 text-sm text-gray-900 dark:text-white whitespace-nowrap">
                     ${t.date}<br><span class="text-xs text-gray-400">${t.time || ''}</span>
                 </td>
                 <td class="px-6 py-4 text-sm font-bold text-gray-700 dark:text-gray-200">
                     ${t.symbol} <span class="text-xs font-normal text-gray-500">(${t.type})</span>
-                    ${isIncomplete ? '<span class="block text-[10px] text-orange-500 font-bold uppercase mt-1">Pending Review</span>' : ''}
                 </td>
                 <td class="px-6 py-4 text-sm text-right font-mono text-indigo-500 font-bold">${rrStr}</td>
                 <td class="px-6 py-4 text-sm text-right font-bold ${t.pnl >= 0 ? 'text-green-500' : 'text-red-500'}">
                     ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
                 </td>
                 <td class="px-6 py-4 text-sm text-right relative flex justify-end items-center gap-2">
-                    ${actionBtn}
+                    <button onclick="window.toggleRowMenu('${t.id}')" class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" /></svg>
+                   </button>
                     
                     <div id="menu-${t.id}" class="hidden absolute right-10 top-2 z-50 w-36 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden text-left">
                         <button onclick="window.viewTrade('${t.id}')" class="block w-full text-left px-4 py-3 text-xs font-bold text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700 flex items-center">📂 View</button>
