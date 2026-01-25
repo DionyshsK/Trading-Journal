@@ -235,9 +235,6 @@ onAuthStateChanged(auth, async (u) => {
             document.getElementById('prof-dob').value = data.dob || "";
             document.getElementById('prof-bio').value = data.bio || "";
             document.getElementById('prof-exp').value = data.experience || "0-1";
-            
-            // --- 🛡️ ΔΙΟΡΘΩΣΗ: Το API Key πρέπει να είναι ΜΕΣΑ στα άγκιστρα ---
-            document.getElementById('prof-api-key').value = data.apiKey || "";
 
             // Strategies
             (data.strategies || []).forEach(v => {
@@ -362,44 +359,60 @@ document.getElementById('wiz-form').addEventListener('submit', async (e) => {
 // 📊 DASHBOARD & ACCOUNT LOGIC
 // ==========================================
 
+// Στο αρχείο app.js
+
 async function loadAccountsList() {
-    const q = query(collection(db, `users/${currentUserId}/accounts`), orderBy('createdAt', 'desc'));
-    const s = await getDocs(q);
-    const l = document.getElementById('accounts-list');
-    l.innerHTML = '';
-
-    // === 🔴 ΔΙΟΡΘΩΣΗ: Αν δεν υπάρχουν λογαριασμοί ===
-    if (s.empty) {
-        document.getElementById('no-accounts-msg').classList.remove('hidden');
-        document.getElementById('dashboard-content').classList.add('hidden');
+    try {
+        console.log("🔄 Ξεκινά η φόρτωση λογαριασμών...");
+        const q = query(collection(db, `users/${currentUserId}/accounts`), orderBy('createdAt', 'desc'));
         
-        // ΕΔΩ ΕΙΝΑΙ Η ΛΥΣΗ: Εμφανίζουμε το Dashboard Tab χειροκίνητα
-        window.switchTab('dashboard'); 
-        return;
-    }
-    
-    document.getElementById('no-accounts-msg').classList.add('hidden');
-    s.forEach(d => {
-        const a = d.data();
-        const div = document.createElement('div');
-        div.className = "bg-white dark:bg-gray-800 p-6 rounded-2xl shadow flex justify-between items-center";
-        div.innerHTML = `
-            <div>
-                <h4 class="font-bold dark:text-white text-lg">${a.name}</h4>
-                <p class="text-xs text-gray-500">${a.marketType} • ${a.type}</p>
-            </div>
-            <div class="flex gap-2">
-                <button onclick="window.selectAccount('${d.id}')" class="bg-indigo-600 text-white px-4 py-2 rounded font-bold">Open</button>
-                <button onclick="window.deleteAccount('${d.id}')" class="text-red-500 px-3 py-2">Delete</button>
-            </div>`;
-        l.appendChild(div);
-    });
+        const s = await getDocs(q);
+        console.log(`✅ Βρέθηκαν ${s.size} λογαριασμοί.`);
 
-    const savedId = localStorage.getItem('lastAccountId');
-    if (savedId && s.docs.find(d => d.id === savedId)) {
-        window.selectAccount(savedId);
-    } else if (!currentAccountId && s.docs.length > 0) {
-        window.selectAccount(s.docs[0].id);
+        const l = document.getElementById('accounts-list');
+        l.innerHTML = '';
+
+        // === 🔴 ΔΙΟΡΘΩΣΗ: Αν δεν υπάρχουν λογαριασμοί ===
+        if (s.empty) {
+            console.log("ℹ️ Δεν βρέθηκαν λογαριασμοί. Μετάβαση στο Dashboard.");
+            document.getElementById('no-accounts-msg').classList.remove('hidden');
+            document.getElementById('dashboard-content').classList.add('hidden');
+            
+            // Εμφανίζουμε το Dashboard Tab χειροκίνητα
+            window.switchTab('dashboard'); 
+            return;
+        }
+        
+        document.getElementById('no-accounts-msg').classList.add('hidden');
+        s.forEach(d => {
+            const a = d.data();
+            const div = document.createElement('div');
+            div.className = "bg-white dark:bg-gray-800 p-6 rounded-2xl shadow flex justify-between items-center";
+            div.innerHTML = `
+                <div>
+                    <h4 class="font-bold dark:text-white text-lg">${a.name}</h4>
+                    <p class="text-xs text-gray-500">${a.marketType} • ${a.type}</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="window.selectAccount('${d.id}')" class="bg-indigo-600 text-white px-4 py-2 rounded font-bold">Open</button>
+                    <button onclick="window.deleteAccount('${d.id}')" class="text-red-500 px-3 py-2">Delete</button>
+                </div>`;
+            l.appendChild(div);
+        });
+
+        // Αυτόματη επιλογή λογαριασμού αν δεν έχει επιλεγεί
+        const savedId = localStorage.getItem('lastAccountId');
+        if (savedId && s.docs.find(d => d.id === savedId)) {
+            console.log("📂 Άνοιγμα αποθηκευμένου λογαριασμού:", savedId);
+            window.selectAccount(savedId);
+        } else if (!currentAccountId && s.docs.length > 0) {
+            console.log("📂 Άνοιγμα πρώτου λογαριασμού:", s.docs[0].id);
+            window.selectAccount(s.docs[0].id);
+        }
+
+    } catch (error) {
+        console.error("❌ CRITICAL ERROR in loadAccountsList:", error);
+        alert("Υπήρξε πρόβλημα στη φόρτωση των δεδομένων!\n\nΔες την κονσόλα (F12) για λεπτομέρειες.\n\nΣφάλμα: " + error.message);
     }
 }
 
